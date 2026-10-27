@@ -290,6 +290,8 @@ body.building #toasts { bottom: calc(env(safe-area-inset-bottom) + 130px); }
   background: #fff; border-radius: 20px; padding: 10px 12px 12px; box-shadow: 0 -4px 24px rgba(60, 30, 90, 0.22);
 }
 #buildbar[hidden], #buildfab[hidden], .fab[hidden] { display: none; }
+#dropbtn { position: absolute; right: 12px; bottom: calc(var(--nav-h) + 14px); z-index: 7; }
+body.building #dropbtn { display: none; }
 .bmsg { font-size: 13px; color: var(--muted); margin: 0 2px 9px; }
 .bmsg b { color: var(--ink); }
 .bmsg .bad { color: var(--red); font-weight: 700; }

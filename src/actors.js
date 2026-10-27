@@ -83,6 +83,22 @@ export class Player {
     this.hint = world.addLabel('hint', '', () => this.pos.clone().setY(2.35));
     this.tag = world.addLabel('name boss', `👑 ${PLAYER_NAME} · Chef`, () => this.pos.clone().setY(-0.05));
     this.heldTable = null;
+    document.getElementById('app').insertAdjacentHTML('beforeend', '<button id="dropbtn" class="fab" hidden>✋ Læg fra dig</button>');
+    this.dropBtn = document.getElementById('dropbtn');
+    this.dropBtn.addEventListener('click', () => this.drop());
+  }
+
+  // Put down whatever we hold: a box goes back to receiving, picked items go back on the shelf.
+  drop() {
+    const s = this.s, c = this.carry;
+    if (!c) return;
+    if (c.kind === 'box') { const b = s.boxes.find((x) => x.id === c.boxId); if (b) b.carriedBy = null; }
+    else releaseOrders(s, c.orderIds);
+    if (this.heldTable != null && this.w.tableRes[this.heldTable] === 'player') this.w.tableRes[this.heldTable] = null;
+    this.heldTable = null;
+    this.carry = null;
+    this.prog = 0;
+    bus.emit('sfx', 'pop');
   }
 
   goTo(t) {
@@ -135,6 +151,7 @@ export class Player {
       else { this.carry.orderIds = ids; setCarry(this.mesh, { kind: 'items', colors: ids.map((id) => productById[s.orders.find((o) => o.id === id).productId].color) }); }
     }
     if (!this.carry) setCarry(this.mesh, null);
+    if (this.dropBtn.hidden === !!this.carry) this.dropBtn.hidden = !this.carry;
 
     // zone
     let zone = null, best = Infinity;
