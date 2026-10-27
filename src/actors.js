@@ -3,7 +3,7 @@ import { mat, rbox, at, makeBox } from './world.js';
 import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, productById, PLAYER_NAME } from './data.js';
 import {
   bus, capacity, stockTotal, upgVal, takeBox, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
-  addBoost, addXP, spend, assignDesks, kr, activeCampaign,
+  addBoost, addXP, kr, activeCampaign,
 } from './state.js';
 
 const PLAYER_PACK = 1.6, EMP_PACK = 2.2;
@@ -142,7 +142,9 @@ export class Player {
       const d = Math.hypot(z.x - this.pos.x, z.z - this.pos.z);
       if (d < z.r && d < best) { best = d; zone = z; }
     }
-    if (zone !== this.zone) { this.zone = zone; this.prog = 0; }
+    if (zone !== this.zone) { this.zone = zone; this.prog = 0; this.padAsked = false; }
+    // Stopping on a build pad asks before spending anything (once per visit).
+    if (zone?.type === 'pad' && !this.moving && !this.padAsked && s.level >= zone.pad.lvl) { this.padAsked = true; bus.emit('padPrompt', zone.pad); }
     if (this.heldTable != null && !(zone?.type === 'table' && zone.idx === this.heldTable && this.carry?.kind === 'items')) {
       if (w.tableRes[this.heldTable] === 'player') w.tableRes[this.heldTable] = null;
       this.heldTable = null;
@@ -226,6 +228,9 @@ export class Player {
           bus.emit('sfx', 'pop');
         },
       };
+      // The update lasts 60 s; it can only be renewed when it's about to run out.
+      const web = s.boosts.find((b) => b.id === 'web'), left = web ? Math.ceil(web.until - s.time) : 0;
+      if (left > 15) return { label: `Webshoppen er opdateret ✓ · igen om ${left - 15}s` };
       return {
         label: 'Opdaterer webshoppen 💻', dur: 2.5 / upgVal(s, 'computer'), working: true,
         onTick: () => (w.deskActive[z.idx] = s.time),
@@ -242,16 +247,7 @@ export class Player {
       const p = z.pad;
       if (s.level < p.lvl) return { label: `🔒 Kræver level ${p.lvl}`, blocked: true };
       if (s.money < p.cost) return { label: `Mangler ${kr(p.cost - s.money)}`, blocked: true };
-      return {
-        label: `Byg ${p.name} · ${kr(p.cost)}`, dur: 0.9,
-        run: () => {
-          if (!spend(s, p.cost)) return;
-          s[p.key]++;
-          assignDesks(s);
-          addXP(s, 15);
-          bus.emit('built', p);
-        },
-      };
+      return { label: `${p.icon} ${p.name} · ${kr(p.cost)}` };
     }
     return null;
   }

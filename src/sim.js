@@ -1,9 +1,9 @@
 import {
-  DAY_LENGTH, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, PLAYER_NAME,
+  DAY_LENGTH, rentOf, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, PLAYER_NAME,
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
-  freeBoxSlot, refreshCandidates, spend, kr, activeCampaign,
+  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available,
 } from './state.js';
 
 export function effects(s) {
@@ -43,7 +43,7 @@ export function startCampaign(s, c) {
 
 export function buyStock(s, productId, boxes) {
   const p = productById[productId];
-  if (!spend(s, p.cost * p.box * boxes)) return false;
+  if (!spend(s, p.cost * p.box * boxes, 'goods')) return false;
   const delay = s.time < s.delayUntil ? 20 : 6;
   for (let i = 0; i < boxes; i++) s.deliveries.push({ productId, qty: p.box, eta: s.time + delay + i * 0.4 });
   s.stats.boxesBought += boxes;
@@ -65,23 +65,21 @@ function spawnOrder(s) {
   let r = Math.random() * w.reduce((a, b) => a + b, 0);
   let p = L[L.length - 1];
   for (let i = 0; i < L.length; i++) { r -= w[i]; if (r <= 0) { p = L[i]; break; } }
-  if ((s.stock[p.id] || 0) <= 0) return lose(s, p, 'stock');
+  if (available(s, p.id) <= 0) return lose(s, p, 'stock');
   if (s.orders.length >= queueCap(s)) return lose(s, p, 'queue');
-  s.stock[p.id]--;
   s.orders.push({ id: s.nextId++, productId: p.id, t: s.time, status: 'queued', by: null });
   bus.emit('order', p);
 }
 
 function endDay(s) {
   const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
-  s.money -= wages;
-  s.stats.today.costs += wages;
-  if (wages) bus.emit('money', -wages);
+  charge(s, wages, 'staff');
+  charge(s, rentOf(s), 'rent');
   const t = s.stats.today;
   s.stats.history.push({ day: s.day, ...t, wages });
   if (s.stats.history.length > 7) s.stats.history.shift();
   bus.emit('dayEnd', { day: s.day, ...t, wages });
-  s.stats.today = { orders: 0, revenue: 0, costs: 0, lost: 0 };
+  s.stats.today = newDay();
   s.day++;
   s.dayTime = 0;
   refreshCandidates(s);
@@ -172,7 +170,7 @@ export function update(s, dt) {
 }
 
 export function buyShop(s, item) {
-  if (item.money && !spend(s, item.money)) return false;
+  if (item.money && !spend(s, item.money, 'marketing')) return false;
   if (item.gems) { if (s.gems < item.gems) return false; s.gems -= item.gems; }
   if (item.boost) addBoost(s, { id: item.id, name: item.name, icon: item.icon, ...item.boost });
   if (item.action === 'express') s.deliveries.forEach((d) => (d.eta = s.time));
@@ -203,7 +201,7 @@ export function advisor(s) {
     : { text: 'Kasser venter ved varemodtagelsen → pak dem ud', tab: null };
   if (lostStock.length >= 2) {
     const p = productById[lostStock[lostStock.length - 1].id];
-    return { text: `Udsolgt: ${p.icon} ${p.name} – du taber salg → køb flere varer`, tab: 'products' };
+    return { text: `Udsolgt: ${p.icon} ${p.name} – du taber salg → køb flere varer`, tab: 'buy' };
   }
   if (lostQueue.length || q >= 6) {
     if (s.level >= ROLES.packer.lvl && s.employees.filter((e) => e.role === 'packer').length < s.tables)
@@ -216,11 +214,11 @@ export function advisor(s) {
     if (s.level >= ROLES.ecom.lvl && !has('ecom')) return { text: 'For få ordrer → ansæt en E-commerce Manager', tab: 'staff' };
     return { text: 'For få ordrer → kør en kampagne, arbejd på webshoppen eller køb annoncer', tab: 'shop' };
   }
-  if (stock < 8 && !s.deliveries.length) return { text: 'Lageret er ved at løbe tørt → bestil flere varer', tab: 'products' };
+  if (stock < 8 && !s.deliveries.length) return { text: 'Lageret er ved at løbe tørt → bestil flere varer', tab: 'buy' };
   return { text: 'Det kører! Find den næste ting at optimere 🚀', tab: null };
 }
 
 export function dayReport(r) {
   const profit = r.revenue - r.costs;
-  return `🌙 Dag ${r.day} slut · ${r.orders} ordrer · Omsætning ${kr(r.revenue)} · Løn ${kr(r.wages)} · Resultat ${profit >= 0 ? '+' : ''}${kr(profit)}`;
+  return `🌙 Dag ${r.day} slut · ${r.orders} ordrer · Omsætning ${kr(r.revenue)} · Udgifter ${kr(r.costs)} · Resultat ${profit >= 0 ? '+' : ''}${kr(profit)}`;
 }

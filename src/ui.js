@@ -1,18 +1,18 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, xpFor, MAX_LEVEL, unlocksAt,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
 } from './data.js';
 import {
-  bus, fmt, kr, capacity, stockTotal, queuedCount, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign,
+  bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
+  spend, addMoney, addXP, resetState, activeCampaign, assignDesks,
 } from './state.js';
 import { effects, buyStock, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate } from './sim.js';
 
 const TABS = [
   ['home', '🏠', 'Hjem'], ['staff', '👥', 'Ansatte'], ['orders', '🧾', 'Ordrer'], ['products', '👕', 'Produkter'],
-  ['shop', '🛍️', 'Butik'], ['upgrades', '⬆️', 'Upgrades'], ['stats', '📊', 'Statistik'],
+  ['shop', '🛍️', 'Butik'], ['upgrades', '⬆️', 'Upgrades'], ['stats', '📊', 'Økonomi'],
 ];
-const TITLES = { staff: 'Ansatte', orders: 'Ordrer', products: 'Produkter', shop: 'Butik & kampagner', upgrades: 'Upgrades', stats: 'Statistik' };
+const TITLES = { staff: 'Ansatte', orders: 'Ordrer', products: 'Produkter', shop: 'Butik & kampagner', upgrades: 'Upgrades', stats: 'Økonomi' };
 const $ = (sel, el = document) => el.querySelector(sel);
 const pct = (v) => `${Math.round(v * 100)} %`;
 
@@ -23,6 +23,7 @@ export class UI {
     this.shownMoney = s.money;
     this.tick = 0;
     this.confirmFire = null;
+    this.prodTab = 'mine';
     this.build();
     this.bind();
   }
@@ -32,14 +33,16 @@ export class UI {
     app.insertAdjacentHTML('beforeend', `
       <div id="hud">
         <div class="top">
-          <div class="chip money"><span>💰</span><b id="h-money"></b></div>
-          <div class="chip level"><div class="lvl" id="h-lvl"></div><div class="xpbar"><i id="h-xp"></i></div></div>
-          <div class="chip"><span>❤️</span><b id="h-gems"></b></div>
-          <div class="chip"><span>👥</span><b id="h-staff"></b></div>
+          <div class="chip money"><span class="ci">💰</span><div class="ct"><b id="h-money"></b><small>Din balance</small></div></div>
+          <div class="chip level"><div class="lvl" id="h-lvl"></div><div class="ct"><div class="xpbar"><i id="h-xp"></i></div><small><b id="h-lvtxt"></b><br><span id="h-xptxt"></span></small></div></div>
+          <div class="chip"><span class="ci">❤️</span><div class="ct"><b id="h-gems"></b><small>Hjerter</small></div></div>
+          <div class="chip"><span class="ci">👥</span><div class="ct"><b id="h-staff"></b><small>Ansatte</small></div></div>
         </div>
-        <div class="dayrow"><span id="h-day"></span><div class="daybar"><i id="h-daybar"></i></div></div>
-        <div id="quest" class="quest"></div>
-        <button id="advisor" class="advisor"></button>
+        <div class="panel">
+          <div class="dayrow"><b id="h-day"></b><div class="daybar"><i id="h-daybar"></i></div><small id="h-daytxt"></small></div>
+          <button id="quest" class="quest"></button>
+          <button id="advisor" class="advisor"></button>
+        </div>
         <div id="boosts"></div>
       </div>
       <div id="joy"><div class="knob"></div></div>
@@ -62,6 +65,7 @@ export class UI {
     bus.on('dayEnd', (r) => this.toast(dayReport(r), 'day', 5000));
     bus.on('ship', (rev, pos) => { this.w.popup(`+${fmt(rev)} kr`, pos, 'money'); bus.emit('sfx', 'coin'); });
     bus.on('built', (p) => { this.toast(`🎉 ${p.name} bygget!`, 'good'); bus.emit('sfx', 'level'); });
+    bus.on('padPrompt', (p) => this.padPrompt(p));
     bus.on('hired', (e) => this.toast(`👋 ${e.name} er startet som ${ROLES[e.role].name}!`, 'good'));
   }
 
@@ -75,14 +79,14 @@ export class UI {
     if (cmd === 'hire') { if (!hire(s, +x)) this.toast('Ikke nok penge 💸', 'bad'); }
     if (cmd === 'upEmp') {
       const e = s.employees.find((k) => k.id === +x), c = empUpgradeCost(e);
-      if (c != null && spend(s, c)) { e.tier++; this.toast(`⭐ ${e.name} er nu ${EMP_TIERS[e.tier].name}!`, 'good'); } else this.toast('Ikke nok penge 💸', 'bad');
+      if (c != null && spend(s, c, 'hiring')) { e.tier++; this.toast(`⭐ ${e.name} er nu ${EMP_TIERS[e.tier].name}!`, 'good'); } else this.toast('Ikke nok penge 💸', 'bad');
     }
     if (cmd === 'fire') {
       if (this.confirmFire === +x) { fire(s, +x); this.confirmFire = null; } else this.confirmFire = +x;
     }
     if (cmd === 'upg') {
       const U = UPGRADES[x], next = U.levels[s.upg[x] + 1];
-      if (next && s.level >= next.lvl && spend(s, next.cost)) { s.upg[x]++; addXP(s, 10); this.toast(`⬆️ ${next.name} købt!`, 'good'); bus.emit('sfx', 'level'); }
+      if (next && s.level >= next.lvl && spend(s, next.cost, 'invest')) { s.upg[x]++; addXP(s, 10); this.toast(`⬆️ ${next.name} købt!`, 'good'); bus.emit('sfx', 'level'); }
     }
     if (cmd === 'shop') {
       const item = SHOP.find((i) => i.id === x);
@@ -90,6 +94,8 @@ export class UI {
     }
     if (cmd === 'camp') startCampaign(s, CAMPAIGNS.find((c) => c.id === x));
     if (cmd === 'claim') this.claimQuest();
+    if (cmd === 'build') this.buildPad(x, +y);
+    if (cmd === 'ptab') this.prodTab = x;
     if (cmd === 'advisor' && x) this.open(x);
     if (cmd === 'closeModal') $('#modal').classList.remove('show');
     if (cmd === 'reset') { if (this.confirmReset) resetState(); else this.confirmReset = true; }
@@ -97,6 +103,7 @@ export class UI {
   }
 
   open(tab) {
+    if (tab === 'buy') { tab = 'products'; this.prodTab = 'buy'; } else if (tab === 'products') this.prodTab = 'mine';
     this.tab = tab;
     this.confirmFire = null;
     this.confirmReset = false;
@@ -133,6 +140,28 @@ export class UI {
     bus.emit('sfx', 'level');
   }
 
+  // ---------- build pads ----------
+  padPrompt(p) {
+    const s = this.s, can = s.money >= p.cost;
+    const what = { shelf: `+${upgVal(s, 'storage')} pladser på lageret`, table: 'Ét pakkebord mere – flere kan pakke på samme tid', desk: 'Plads til en medarbejder mere på kontoret' }[p.type];
+    $('#modal').innerHTML = `<div class="card-modal">
+      <div class="burst">${p.icon}</div><h2>${p.name}</h2><p>${what}</p>
+      <div class="mbtns"><button class="btn ghost big" data-act="closeModal">Nej tak</button>
+        <button class="btn big" data-act="build:${p.type}:${p.idx}" ${can ? '' : 'disabled'}>${can ? `Køb · ${kr(p.cost)}` : `Mangler ${kr(p.cost - s.money)}`}</button></div></div>`;
+    $('#modal').classList.add('show');
+  }
+
+  buildPad(type, idx) {
+    const s = this.s, p = this.w.pads.find((x) => x.type === type && x.idx === idx);
+    $('#modal').classList.remove('show');
+    if (!p || s.level < p.lvl) return;
+    if (!spend(s, p.cost, 'invest')) { this.toast('Ikke nok penge 💸', 'bad'); return; }
+    s[p.key]++;
+    assignDesks(s);
+    addXP(s, 15);
+    bus.emit('built', p);
+  }
+
   // ---------- notifications ----------
   toast(text, cls = '', ms = 3200) {
     const box = $('#toasts');
@@ -167,21 +196,27 @@ export class UI {
 
     $('#h-lvl').textContent = s.level;
     $('#h-xp').style.width = s.level >= MAX_LEVEL ? '100%' : `${(s.xp / xpFor(s.level)) * 100}%`;
+    $('#h-lvtxt').textContent = `Level ${s.level}`;
+    $('#h-xptxt').textContent = s.level >= MAX_LEVEL ? 'MAX' : `${fmt(s.xp)}/${fmt(xpFor(s.level))} XP`;
     $('#h-gems').textContent = s.gems;
     $('#h-staff').textContent = s.employees.length;
     $('#h-day').textContent = `Dag ${s.day}`;
     $('#h-daybar').style.width = `${(s.dayTime / DAY_LENGTH) * 100}%`;
+    const left = Math.max(0, Math.ceil(DAY_LENGTH - s.dayTime));
+    $('#h-daytxt').textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
 
     const qs = this.quest();
-    $('#quest').innerHTML = qs
-      ? `<span class="qi">🎯</span><div class="qt"><b>${qs.q.text}</b><div class="qbar"><i style="width:${(qs.cur / qs.target) * 100}%"></i></div></div>
-         ${qs.done ? `<button class="btn claim" data-act="claim">Hent ${rewardText(qs.q.reward)}</button>` : `<small>${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}</small>`}`
-      : `<span class="qi">🏆</span><div class="qt"><b>Alle mål klaret – flere kommer snart!</b></div>`;
-    $('#quest').classList.toggle('done', !!qs?.done);
+    const qEl = $('#quest');
+    qEl.innerHTML = qs
+      ? `<span class="qi">🎯</span><b class="qt">${qs.q.text}</b>
+         ${qs.done ? `<span class="btn claim">Hent ${rewardText(qs.q.reward)}</span>` : `<small>${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}</small>${qs.q.tab ? '<span class="chev">›</span>' : ''}`}`
+      : `<span class="qi">🏆</span><b class="qt">Alle mål klaret – flere kommer snart!</b>`;
+    qEl.classList.toggle('done', !!qs?.done);
+    qEl.dataset.act = qs?.done ? 'claim' : `advisor:${qs?.q.tab || ''}`;
 
     const adv = advisor(s);
     const advEl = $('#advisor');
-    advEl.innerHTML = `💡 ${adv.text}`;
+    advEl.innerHTML = `<span class="qi">💡</span><span class="qt">${adv.text}</span>${adv.tab ? '<span class="chev">›</span>' : ''}`;
     advEl.dataset.act = `advisor:${adv.tab || ''}`;
 
     const camp = activeCampaign(s);
@@ -265,21 +300,43 @@ export class UI {
   }
 
   r_products() {
+    const s = this.s, buy = this.prodTab === 'buy';
+    const tabs = `<div class="seg subtabs"><button class="${buy ? '' : 'on'}" data-act="ptab:mine">👕 Mine produkter</button><button class="${buy ? 'on' : ''}" data-act="ptab:buy">🛒 Indkøb</button></div>`;
+    return tabs + (buy ? this.r_buy() : this.r_mine());
+  }
+
+  // Products the shop sells or has sold.
+  r_mine() {
     const s = this.s;
     const transit = (id) => s.deliveries.filter((d) => d.productId === id).reduce((a, d) => a + d.qty, 0) + s.boxes.filter((b) => b.productId === id).reduce((a, b) => a + b.qty, 0);
-    return `<p class="tip">Varer leveres i kasser ved varemodtagelsen. Lager: <b>${stockTotal(s)}/${capacity(s)}</b></p>` + PRODUCTS.map((p) => {
-      if (p.lvl > s.level) return `<div class="locked">🔒 ${p.icon} ${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span> · Level ${p.lvl}</div>`;
-      const price = unitPrice(s, p), mode = s.priceMode[p.id] || 'normal', box = p.cost * p.box;
-      const stock = s.stock[p.id] || 0, tr = transit(p.id);
+    const mine = PRODUCTS.filter((p) => s.everStocked[p.id] || transit(p.id));
+    if (!mine.length) return '<p class="empty">Du har ingen varer i shoppen endnu. Køb dem hjem under 🛒 Indkøb.</p>';
+    return `<p class="tip">Lager: <b>${stockTotal(s)}/${capacity(s)}</b> · Varer der er bestilt men ikke plukket, står stadig på reolen.</p>` + mine.map((p) => {
+      const price = unitPrice(s, p), mode = s.priceMode[p.id] || 'normal';
+      const stock = s.stock[p.id] || 0, tr = transit(p.id), free = Math.max(0, available(s, p.id));
       const trend = s.trend?.id === p.id && s.trend.until > s.time;
       return `<div class="card prod">
         <div class="av big" style="background:${p.color}33">${p.icon}</div>
         <div class="info">
-          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${trend ? ' <span class="tag hot">🔥 Trend</span>' : ''}</b>
-          <small>På lager: <b class="${stock ? '' : 'warn'}">${stock}</b>${tr ? ` · På vej/ved modtagelse: ${tr}` : ''} · Solgt: ${s.sold[p.id] || 0}</small>
-          <small>Indkøb ${kr(p.cost)} · Salg ${kr(price)} · Margin <b>${kr(price - p.cost)}</b></small>
-          <small>Popularitet ${'★'.repeat(Math.round(p.pop * 3))}${'☆'.repeat(Math.max(0, 5 - Math.round(p.pop * 3)))}</small>
+          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${trend ? ' <span class="tag hot">🔥 Trend</span>' : ''}${stock ? '' : ' <span class="tag hot">Udsolgt</span>'}</b>
+          <small>På reolen: <b class="${free ? '' : 'warn'}">${stock}</b>${stock !== free ? ` (${stock - free} bestilt)` : ''}${tr ? ` · På vej: ${tr}` : ''} · Solgt: ${s.sold[p.id] || 0}</small>
+          <small>Salgspris ${kr(price)} · Margin <b>${kr(price - p.cost)}</b></small>
           <div class="seg">${Object.entries(PRICE_MODES).map(([k, m]) => `<button class="${k === mode ? 'on' : ''}" data-act="price:${p.id}:${k}">${m.name} pris</button>`).join('')}</div>
+        </div></div>`;
+    }).join('');
+  }
+
+  r_buy() {
+    const s = this.s;
+    return `<p class="tip">Varerne kommer i kasser til varemodtagelsen – bær dem hen på reolen. Lager: <b>${stockTotal(s)}/${capacity(s)}</b></p>` + PRODUCTS.map((p) => {
+      if (p.lvl > s.level) return `<div class="locked">🔒 ${p.icon} ${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span> · Level ${p.lvl}</div>`;
+      const box = p.cost * p.box;
+      return `<div class="card prod">
+        <div class="av big" style="background:${p.color}33">${p.icon}</div>
+        <div class="info">
+          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${s.everStocked[p.id] ? '' : ' <span class="tag gold">NY</span>'}</b>
+          <small>Indkøb ${kr(p.cost)} · Salg ${kr(p.price)} · På reolen: ${s.stock[p.id] || 0}</small>
+          <small>Popularitet ${'★'.repeat(Math.round(p.pop * 3))}${'☆'.repeat(Math.max(0, 5 - Math.round(p.pop * 3)))}</small>
           <div class="buyrow">
             <button class="btn" data-act="buy:${p.id}:1" ${s.money < box ? 'disabled' : ''}>Køb 1 kasse (${p.box})<small>${kr(box)}</small></button>
             <button class="btn" data-act="buy:${p.id}:3" ${s.money < box * 3 ? 'disabled' : ''}>Køb 3 kasser<small>${kr(box * 3)}</small></button>
@@ -330,27 +387,43 @@ export class UI {
   }
 
   r_stats() {
-    const s = this.s, fx = effects(s), h = s.stats.history;
-    const max = Math.max(1, ...h.map((d) => d.revenue));
+    const s = this.s, fx = effects(s), h = s.stats.history, td = s.stats.today, st = s.stats;
+    const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
+    const res = (n) => `<b class="${n < 0 ? 'warn' : 'pos'}">${n >= 0 ? '+' : ''}${kr(n)}</b>`;
+    const totalExp = Object.values(st.exp).reduce((a, b) => a + b, 0);
+    const lines = Object.entries(EXPENSES).filter(([k]) => td.exp[k] || st.exp[k])
+      .map(([k, name]) => `<tr><td>${name}</td><td>${kr(td.exp[k] || 0)}</td><td>${kr(st.exp[k] || 0)}</td></tr>`).join('');
+    const max = Math.max(1, ...h.map((d) => Math.max(d.revenue, d.costs)));
     const bars = h.length
-      ? `<div class="bars">${h.map((d) => `<div class="bar"><small>${fmt(d.revenue)}</small><i style="height:${(d.revenue / max) * 100}%"></i><span>D${d.day}</span></div>`).join('')}</div>`
+      ? `<div class="bars">${h.map((d) => `<div class="bar"><small>${fmt(d.revenue - d.costs)}</small><div class="pair"><i style="height:${(d.revenue / max) * 100}%"></i><i class="cost" style="height:${(d.costs / max) * 100}%"></i></div><span>D${d.day}</span></div>`).join('')}</div>
+         <p class="legend"><i></i>Indtægter <i class="cost"></i>Udgifter · tal = resultat</p>`
       : '<p class="empty">Historik vises efter første dag.</p>';
-    const sold = PRODUCTS.filter((p) => s.sold[p.id]).map((p) => `<div class="row"><span class="ic">${p.icon}</span><div class="info"><b>${p.name}</b></div><b>${s.sold[p.id]} stk</b></div>`).join('');
     return `<div class="grid3">
-        <div class="stat"><small>Omsætning i alt</small><b>${kr(s.stats.revenue)}</b></div>
-        <div class="stat"><small>Ordrer sendt</small><b>${fmt(s.stats.shipped)}</b></div>
-        <div class="stat"><small>Tabte salg</small><b>${fmt(s.stats.lost)}</b></div>
+        <div class="stat"><small>Indtægter i dag</small><b class="pos">${kr(td.revenue)}</b></div>
+        <div class="stat"><small>Udgifter i dag</small><b>${kr(td.costs)}</b></div>
+        <div class="stat"><small>Resultat i dag</small>${res(td.revenue - td.costs)}</div>
+      </div>
+      <h3>Regnskab</h3>
+      <table class="ledger">
+        <tr><th></th><th>I dag</th><th>I alt</th></tr>
+        <tr class="inc"><td>🛍️ Salg (${td.orders} / ${fmt(st.shipped)} ordrer)</td><td>${kr(td.revenue)}</td><td>${kr(st.revenue)}</td></tr>
+        ${lines}
+        <tr class="sum"><td>Resultat</td><td>${res(td.revenue - td.costs)}</td><td>${res(st.revenue - totalExp)}</td></tr>
+      </table>
+      <h3>Faste udgifter</h3>
+      <div class="breakdown">
+        <small>🏠 Husleje: <b>${kr(rentOf(s))}/dag</b> – stiger når du bygger reoler, pakkeborde og skriveborde</small>
+        <small>👥 Løn: <b>${kr(wages)}/dag</b> (${s.employees.length} ansatte)</small>
+        <small>🎁 Emballage: <b>${kr(PACKAGING)}</b> og 🚚 fragt: <b>${kr(FREIGHT)}</b> pr. pakke</small>
+        <small>Husleje og løn trækkes når dagen slutter.</small>
+      </div>
+      <h3>Resultat pr. dag</h3>${bars}
+      <h3>Nøgletal</h3>
+      <div class="grid3">
         <div class="stat"><small>Besøgende/min</small><b>${fx.traffic.toFixed(0)}</b></div>
         <div class="stat"><small>Konvertering</small><b>${(fx.conv * 100).toFixed(1)} %</b></div>
-        <div class="stat"><small>Ordrer/min</small><b>${fx.opm.toFixed(1)}</b></div>
+        <div class="stat"><small>Tabte salg</small><b>${fmt(st.lost)}</b></div>
       </div>
-      <div class="breakdown">
-        <small>Trafik: SoMe +${pct(fx.some)} · Boosts +${pct(fx.bt)} · Tilfredshed ×${fx.sat.toFixed(2)}</small>
-        <small>Konvertering: Webshop +${pct(upgVal(s, 'webshop'))} · E-com +${pct(fx.ecom)} · Boosts +${pct(fx.bc)}</small>
-        ${fx.camp ? `<small>Kampagne: ${fx.camp.name} · ordrer ×${fx.camp.orders} · priser ×${fx.camp.price}</small>` : ''}
-      </div>
-      <h3>Omsætning pr. dag</h3>${bars}
-      <h3>Salg pr. produkt</h3>${sold || '<p class="empty">Intet solgt endnu.</p>'}
       <button class="btn ghost wide" data-act="reset">${this.confirmReset ? 'Tryk igen for at slette alt' : 'Start forfra'}</button>`;
   }
 }

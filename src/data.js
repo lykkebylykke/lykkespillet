@@ -1,6 +1,16 @@
 // All tunable game data lives here.
 
 export const DAY_LENGTH = 120; // seconds per in-game day
+
+// ---------- running costs ----------
+export const PACKAGING = 4; // kr per parcel
+export const FREIGHT = 15; // kr per parcel
+// Daily rent grows with the space you build.
+export const rentOf = (s) => 100 + 40 * (s.shelves - 1) + 80 * (s.tables - 1) + 50 * (s.desks - 1);
+export const EXPENSES = {
+  goods: '📦 Varekøb', staff: '👥 Løn', rent: '🏠 Husleje', packaging: '🎁 Emballage', freight: '🚚 Fragt',
+  hiring: '🤝 Rekruttering & oplæring', invest: '🏗️ Byggeri & upgrades', marketing: '📣 Annoncer & boosts',
+};
 export const MAX_LEVEL = 20;
 export const xpFor = (l) => Math.round(80 * Math.pow(l, 1.55));
 
@@ -158,7 +168,7 @@ export const QUESTS = [
   { text: 'Vent på en ordre og hent varen på reolen', goal: (s) => [s.stats.itemsPicked, 1], reward: { xp: 10 }, target: 'shelf' },
   { text: 'Pak ordren ved pakkebordet', goal: (s) => [s.stats.shipped, 1], reward: { money: 200 }, target: 'table' },
   { text: 'Arbejd på webshoppen ved computeren', goal: (s) => [s.stats.webshopWork, 1], reward: { money: 100 }, target: 'desk' },
-  { text: 'Køb en kasse varer under Produkter', goal: (s) => [s.stats.boxesBought, 1], reward: { money: 150 }, tab: 'products' },
+  { text: 'Køb en kasse varer under Indkøb', goal: (s) => [s.stats.boxesBought, 1], reward: { money: 150 }, tab: 'buy' },
   { text: 'Send 10 ordrer', goal: (s) => [s.stats.shipped, 10], reward: { money: 300, gems: 2 } },
   { text: 'Byg en ekstra lagerreol', goal: (s) => [s.shelves, 2], reward: { money: 300 }, target: 'pad-shelf' },
   { text: 'Ansæt en Lagerpakker', goal: (s) => [empCount(s, 'packer'), 1], reward: { money: 500 }, tab: 'staff' },

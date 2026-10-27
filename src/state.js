@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
-  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor,
+  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT,
 } from './data.js';
 
 const SAVE_KEY = 'lykkespillet-v1';
@@ -20,9 +20,11 @@ export function fmt(n) {
 }
 export const kr = (n) => `${fmt(n)} kr`;
 
+export const newDay = () => ({ orders: 0, revenue: 0, costs: 0, lost: 0, exp: {} });
+
 export function newState() {
   return {
-    v: 1, money: 1500, gems: 5, xp: 0, level: 1,
+    v: 2, money: 1500, gems: 5, xp: 0, level: 1,
     time: 0, day: 1, dayTime: 0, eventT: 200, parcelT: 0, pickupAt: 0,
     stock: {}, everStocked: {}, priceMode: {}, sold: {},
     orders: [], nextId: 1,
@@ -39,7 +41,7 @@ export function newState() {
     stats: {
       shipped: 0, revenue: 0, lost: 0, boxesPicked: 0, unitsStocked: 0, itemsPicked: 0,
       webshopWork: 0, boxesBought: 0, campaigns: 0, ticketsSolved: 0, history: [],
-      today: { orders: 0, revenue: 0, costs: 0, lost: 0 },
+      exp: {}, today: newDay(),
     },
   };
 }
@@ -49,10 +51,16 @@ export function loadState() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (raw) {
       const s = Object.assign(newState(), JSON.parse(raw));
+      s.stats.exp ??= {};
+      s.stats.today.exp ??= {};
+      // v1 took stock off the shelf when an order arrived; now it stays until picked.
+      if (s.v < 2) { for (const o of s.orders) if (o.status === 'queued') s.stock[o.productId] = (s.stock[o.productId] || 0) + 1; s.v = 2; }
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;
       for (const o of s.orders) {
-        if (o.by !== 'player' || !pc || pc.kind !== 'items' || !pc.orderIds.includes(o.id)) { o.status = 'queued'; o.by = null; }
+        if (o.status === 'picked' && (o.by !== 'player' || !pc || pc.kind !== 'items' || !pc.orderIds.includes(o.id))) {
+          o.status = 'queued'; o.by = null; s.stock[o.productId] = (s.stock[o.productId] || 0) + 1;
+        }
       }
       for (const b of s.boxes) {
         if (b.carriedBy !== 'player') b.carriedBy = null;
@@ -85,6 +93,8 @@ export const stockTotal = (s) => Object.values(s.stock).reduce((a, b) => a + b, 
 export const listed = (s) => PRODUCTS.filter((p) => p.lvl <= s.level && s.everStocked[p.id]);
 export const activeCampaign = (s) => (s.campaign && s.campaign.until > s.time ? s.campaign : null);
 export const unitPrice = (s, p) => Math.round(p.price * PRICE_MODES[s.priceMode[p.id] || 'normal'].price * (activeCampaign(s)?.price ?? 1));
+// Units on the shelf not yet promised to a queued order.
+export const available = (s, id) => (s.stock[id] || 0) - s.orders.filter((o) => o.productId === id && o.status === 'queued').length;
 export const queuedCount = (s) => s.orders.filter((o) => o.status === 'queued').length;
 export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1));
 export const freeBoxSlot = (s) => {
@@ -98,11 +108,20 @@ export function addMoney(s, amt, pos) {
   bus.emit('money', amt, pos);
 }
 
-export function spend(s, amt) {
-  if (s.money < amt) return false;
+// Books an expense under a category (see EXPENSES) — may push the balance negative.
+export function charge(s, amt, cat) {
+  if (!amt) return;
   s.money -= amt;
-  s.stats.today.costs += amt;
+  const t = s.stats.today;
+  t.costs += amt;
+  t.exp[cat] = (t.exp[cat] || 0) + amt;
+  s.stats.exp[cat] = (s.stats.exp[cat] || 0) + amt;
   bus.emit('money', -amt);
+}
+
+export function spend(s, amt, cat) {
+  if (s.money < amt) return false;
+  charge(s, amt, cat);
   return true;
 }
 
@@ -148,12 +167,17 @@ export function claimOrder(s, who) {
   if (!o) return null;
   o.status = 'picked';
   o.by = who;
+  s.stock[o.productId]--;
   s.stats.itemsPicked++;
   return o;
 }
 
 export function releaseOrders(s, ids) {
-  for (const o of s.orders) if (ids.includes(o.id)) { o.status = 'queued'; o.by = null; }
+  for (const o of s.orders) {
+    if (!ids.includes(o.id) || o.status !== 'picked') continue;
+    o.status = 'queued'; o.by = null;
+    s.stock[o.productId] = (s.stock[o.productId] || 0) + 1;
+  }
 }
 
 export function shipOrder(s, id, pos) {
@@ -163,6 +187,8 @@ export function shipOrder(s, id, pos) {
   const p = productById[o.productId];
   const rev = unitPrice(s, p);
   addMoney(s, rev, pos);
+  charge(s, PACKAGING, 'packaging');
+  charge(s, FREIGHT, 'freight');
   s.stats.shipped++;
   s.stats.revenue += rev;
   s.stats.today.orders++;
@@ -217,7 +243,7 @@ export function assignDesks(s) {
 
 export function hire(s, cid) {
   const c = s.candidates.find((x) => x.cid === cid);
-  if (!c || !spend(s, c.cost)) return false;
+  if (!c || !spend(s, c.cost, 'hiring')) return false;
   s.candidates = s.candidates.filter((x) => x !== c);
   const e = { id: s.nextId++, name: c.name, role: c.role, tier: 0, special: c.special || null, specialDesc: c.specialDesc || null, look: c.look, desk: null };
   s.employees.push(e);
