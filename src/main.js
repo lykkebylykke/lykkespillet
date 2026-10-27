@@ -10,25 +10,37 @@ class Input {
   constructor(canvas) {
     this.jx = 0; this.jy = 0; this.keys = new Set();
     const joy = document.getElementById('joy'), knob = joy.querySelector('.knob');
-    let id = null, ox = 0, oy = 0;
+    // A quick tap walks to that spot (onTap); press-and-drag is a joystick.
+    let id = null, ox = 0, oy = 0, t0 = 0, dragging = false, holdTimer = 0;
     const R = 55;
-    canvas.addEventListener('pointerdown', (e) => {
-      id = e.pointerId; ox = e.clientX; oy = e.clientY;
+    const showJoy = () => {
+      dragging = true;
       const r = joy.parentElement.getBoundingClientRect();
       joy.style.left = `${ox - r.left}px`; joy.style.top = `${oy - r.top}px`;
       joy.classList.add('on');
       knob.style.transform = 'translate(-50%,-50%)';
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      id = e.pointerId; ox = e.clientX; oy = e.clientY; t0 = performance.now(); dragging = false;
+      clearTimeout(holdTimer);
+      holdTimer = setTimeout(() => id === e.pointerId && !dragging && showJoy(), 220);
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener('pointermove', (e) => {
       if (e.pointerId !== id) return;
       let dx = e.clientX - ox, dy = e.clientY - oy;
       const d = Math.hypot(dx, dy);
+      if (!dragging) { if (d < 10) return; showJoy(); }
       if (d > R) { dx *= R / d; dy *= R / d; }
       this.jx = dx / R; this.jy = dy / R;
       knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
     });
-    const end = (e) => { if (e.pointerId !== id) return; id = null; this.jx = this.jy = 0; joy.classList.remove('on'); };
+    const end = (e) => {
+      if (e.pointerId !== id) return;
+      clearTimeout(holdTimer);
+      if (e.type === 'pointerup' && !dragging && performance.now() - t0 < 350) this.onTap?.(e.clientX, e.clientY);
+      id = null; dragging = false; this.jx = this.jy = 0; joy.classList.remove('on');
+    };
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
     addEventListener('keydown', (e) => this.keys.add(e.key.toLowerCase()));
@@ -79,6 +91,11 @@ function boot() {
   const crew = new Crew(world, s);
   const ui = new UI(s, world);
   const input = new Input(canvas);
+  input.onTap = (cx, cy) => {
+    if (ui.sheetOpen) return;
+    const p = world.screenToGround(cx, cy);
+    if (p) player.goTo(world.walkTarget(p));
+  };
   window.__game = { s, world, player, crew, ui };
 
   bus.on('built', () => world.rebuild());

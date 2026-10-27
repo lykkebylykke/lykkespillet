@@ -85,6 +85,14 @@ export class Player {
     this.heldTable = null;
   }
 
+  goTo(t) {
+    this.path = this.w.findPath(this.pos.x, this.pos.z, t.x, t.z);
+    this.stuck = 0;
+    this.w.setMarker(t);
+  }
+
+  stopPath() { this.path = null; this.w.setMarker(null); }
+
   get carry() { return this.s.player.carry; }
   set carry(v) { this.s.player.carry = v; }
 
@@ -94,13 +102,22 @@ export class Player {
     const s = this.s, w = this.w;
     this.t += dt;
     const speed = upgVal(s, 'shoes') * (activeCampaign(s) ? 1.15 : 1); // adrenaline during campaigns
-    const mx = input.x, mz = input.z, mag = Math.hypot(mx, mz);
-    this.moving = mag > 0.05;
+    let mx = input.x, mz = input.z;
+    if (Math.hypot(mx, mz) > 0.05) { if (this.path) this.stopPath(); }
+    else if (this.path) {
+      const wp = this.path[0], dx = wp.x - this.pos.x, dz = wp.z - this.pos.z, d = Math.hypot(dx, dz);
+      if (d < 0.08) { this.path.shift(); if (!this.path.length) this.stopPath(); }
+      else { const k = Math.min(1, d / (speed * dt)); mx = (dx / d) * k; mz = (dz / d) * k; }
+    }
+    this.moving = Math.hypot(mx, mz) > 0.05;
     if (this.moving) {
+      const px = this.pos.x, pz = this.pos.z;
       this.pos.x += mx * speed * dt;
       this.pos.z += mz * speed * dt;
       w.collide(this.pos);
       faceTowards(this.mesh, mx, mz, dt);
+      // Give up on a tap-walk that is blocked.
+      if (this.path) { const moved = Math.hypot(this.pos.x - px, this.pos.z - pz); this.stuck = moved < speed * dt * 0.2 ? (this.stuck || 0) + dt : 0; if (this.stuck > 0.5) this.stopPath(); }
     }
     this.mesh.position.copy(this.pos);
     s.player.x = this.pos.x; s.player.z = this.pos.z;

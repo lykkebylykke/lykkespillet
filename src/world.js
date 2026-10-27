@@ -215,6 +215,41 @@ export class World {
     this.arrow.rotation.x = Math.PI;
     this.arrow.visible = false;
     sc.add(this.arrow);
+
+    // Tap-to-walk destination marker
+    this.marker = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.4, 28), new THREE.MeshBasicMaterial({ color: '#ff5d8f', transparent: true, opacity: 0.85, depthWrite: false }));
+    this.marker.rotation.x = -Math.PI / 2;
+    this.marker.position.y = 0.03;
+    this.marker.visible = false;
+    sc.add(this.marker);
+  }
+
+  setMarker(p) {
+    this.marker.visible = !!p;
+    if (p) this.marker.position.set(p.x, 0.03, p.z);
+  }
+
+  screenToGround(cx, cy) {
+    const r = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    this.ray ??= new THREE.Raycaster();
+    this.ray.setFromCamera(ndc, this.camera);
+    const p = new THREE.Vector3();
+    return this.ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p);
+  }
+
+  inObstacle(x, z) {
+    return this.obstacles.some((o) => x > o.minX - 0.3 && x < o.maxX + 0.3 && z > o.minZ - 0.3 && z < o.maxZ + 0.3);
+  }
+
+  // Where to walk when the player taps a ground point: snap to nearby stations.
+  walkTarget(p) {
+    const blocked = this.inObstacle(p.x, p.z);
+    let best = null, bd = blocked ? 3.5 : 1.6;
+    for (const z of this.zones) { const d = Math.hypot(z.x - p.x, z.z - p.z); if (d < bd) { bd = d; best = z; } }
+    if (best) return { x: best.x, z: best.z };
+    if (blocked) { const c = this.nearestFree(this.cellOf(p.x, p.z)); return { x: ((c % NX) + 0.5) * CELL, z: (((c / NX) | 0) + 0.5) * CELL }; }
+    return { x: THREE.MathUtils.clamp(p.x, 0.3, W - 0.3), z: THREE.MathUtils.clamp(p.z, 0.3, D - 0.3) };
   }
 
   makeTruck(color, label, scale = 1) {
@@ -510,6 +545,10 @@ export class World {
   // ---------- per-frame ----------
   update(dt, playerPos, questTarget) {
     const s = this.s, now = s.time;
+    // Mobile browsers change the viewport (toolbars) without reliable resize events.
+    const el = this.canvas.parentElement;
+    if (el.clientWidth !== this.cw || el.clientHeight !== this.ch) this.resize();
+    if (this.marker.visible) this.marker.scale.setScalar(1 + Math.sin(now * 6) * 0.12);
     this.camTarget.lerp(new THREE.Vector3(playerPos.x, 0, playerPos.z), 1 - Math.exp(-dt * 5));
     this.camera.position.copy(this.camTarget).add(this.camOffset);
     this.camera.lookAt(this.camTarget);
