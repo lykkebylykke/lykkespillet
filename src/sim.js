@@ -3,11 +3,11 @@ import {
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
-  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP,
+  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP, mood,
 } from './state.js';
 
 export function effects(s) {
-  const comp = upgVal(s, 'computer');
+  const comp = upgVal(s, 'computer') * (1 + mood(s));
   let some = 0, ecom = 0;
   for (const e of s.employees) {
     if (e.desk == null) continue;
@@ -26,7 +26,7 @@ export function effects(s) {
 
 export const queueCap = (s) => 15 + 5 * s.tables;
 
-export const supportRate = (s, e) => SUPPORT_RATE[e.tier] * (e.special === 'fast' ? 1.5 : 1) * upgVal(s, 'computer');
+export const supportRate = (s, e) => SUPPORT_RATE[e.tier] * (e.special === 'fast' ? 1.5 : 1) * upgVal(s, 'computer') * (1 + mood(s));
 // Each E-commerce Manager makes campaigns run 25 % longer.
 export const campaignDur = (s, c) => Math.round(c.dur * (1 + 0.25 * s.employees.filter((e) => e.role === 'ecom').length));
 
@@ -45,7 +45,7 @@ export function startCampaign(s, c) {
 export function buyFurniture(s, type) {
   const F = FURNITURE[type], n = ownedFurniture(s, type);
   if (n >= F.cost.length || s.level < F.lvl[n] || !spend(s, F.cost[n], 'invest')) return false;
-  s.kit[type]++;
+  s.kit[type] = (s.kit[type] || 0) + 1;
   addXP(s, 15);
   return true;
 }

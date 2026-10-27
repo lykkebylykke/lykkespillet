@@ -4,7 +4,7 @@ import {
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture,
+  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, mood,
 } from './state.js';
 import { effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate } from './sim.js';
 
@@ -243,7 +243,7 @@ export class UI {
         <div class="btns"><button class="btn" data-act="hire:${c.cid}" ${s.money < c.cost ? 'disabled' : ''}>Ansæt<small>${kr(c.cost)}</small></button></div></div>`;
     }).join('');
     const locked = Object.values(ROLES).filter((r) => r.lvl > s.level).map((r) => `<div class="locked">🔒 ${r.icon} ${r.name} · Level ${r.lvl}</div>`).join('');
-    return `<h3>Dit team (${s.employees.length})</h3>${team}
+    return `<h3>Dit team (${s.employees.length})</h3><p class="tip">😊 Trivsel: <b>+${Math.round(mood(s) * 100)} %</b> arbejdstempo – køb planter, sofa og hygge under Upgrades.</p>${team}
       <h3>Kandidater <small>· nye hver dag</small></h3>${cands || '<p class="empty">Ingen kandidater endnu – nå level 2 for at kunne ansætte.</p>'}${locked}`;
   }
 
@@ -352,15 +352,19 @@ export class UI {
 
   r_upgrades() {
     const s = this.s;
-    const furn = Object.entries(FURNITURE).map(([type, F]) => {
+    const card = ([type, F]) => {
       const n = ownedFurniture(s, type), max = F.cost.length, cost = F.cost[n], lvl = F.lvl[n];
+      const eff = F.decor ? `<small class="eff">😊 +${Math.round(F.mood * 100)} % arbejdstempo pr. stk.</small>` : '';
       return `<div class="card"><div class="av">${F.icon}</div>
-        <div class="info"><b>${F.name}</b><small>Du har ${n} af ${max}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small></div>
+        <div class="info"><b>${F.name}</b><small>Du har ${n} af ${max}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small>${eff}</div>
         <div class="btns">${n >= max ? '<span class="tag gold">MAX</span>'
           : s.level < lvl ? `<span class="tag">🔒 Lvl ${lvl}</span>`
           : `<button class="btn" data-act="furn:${type}" ${s.money < cost ? 'disabled' : ''}>Køb<small>${kr(cost)}</small></button>`}</div></div>`;
-    }).join('');
-    return `<h3>🛠️ Indretning</h3><p class="tip">Køb møbler og placér dem selv. Med 🛠️ Indret-knappen kan du flytte og dreje alt.</p>${furn}<h3>⬆️ Opgraderinger</h3>` +
+    };
+    const all = Object.entries(FURNITURE);
+    return `<h3>🛠️ Indretning</h3><p class="tip">Køb møbler og placér dem selv. Med 🛠️ Indret-knappen kan du flytte og dreje alt.</p>${all.filter(([, F]) => !F.decor).map(card).join('')}
+      <h3>🪴 Hygge & trivsel</h3><p class="tip">Et rart lager giver glade medarbejdere: alt du placerer her får teamet til at arbejde hurtigere. Trivsel nu: <b>+${Math.round(mood(s) * 100)} %</b></p>${all.filter(([, F]) => F.decor).map(card).join('')}
+      <h3>⬆️ Opgraderinger</h3>` +
       Object.entries(UPGRADES).map(([k, U]) => {
         const cur = U.levels[s.upg[k]], next = U.levels[s.upg[k] + 1];
         const dots = U.levels.map((_, i) => `<i class="${i <= s.upg[k] ? 'on' : ''}"></i>`).join('');

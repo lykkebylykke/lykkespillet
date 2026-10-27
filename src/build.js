@@ -98,7 +98,7 @@ export class Builder {
 
   // The old fixed slots make good first suggestions; otherwise search outward from the player.
   suggest(type) {
-    for (const sl of FURNITURE[type].slots) if (this.w.canPlace(type, sl.x, sl.z, 0).ok) return { x: sl.x, z: sl.z, rot: 0 };
+    for (const sl of FURNITURE[type].slots ?? []) if (this.w.canPlace(type, sl.x, sl.z, 0).ok) return { x: sl.x, z: sl.z, rot: 0 };
     const px = snap(this.player.pos.x), pz = snap(this.player.pos.z);
     for (let r = 0; r < 20; r += SNAP) {
       for (let a = 0; a < 16; a++) {
@@ -131,6 +131,7 @@ export class Builder {
     this.foot.position.set(p.x, 0.02, p.z);
     this.spot.material.color.set(col);
     this.spot.position.set(fp.ax, 0.03, fp.az);
+    this.spot.visible = !FURNITURE[p.type].decor;
     this.render();
     return res.ok;
   }
@@ -188,7 +189,7 @@ export class Builder {
     if (placing) {
       const F = FURNITURE[this.p.type];
       $('#buildbar .bmsg').innerHTML = this.ok
-        ? `<b>${F.icon} ${F.name}</b> · Træk for at flytte · 🟢 = hvor man står`
+        ? `<b>${F.icon} ${F.name}</b> · Træk for at flytte · ${F.decor ? `😊 +${Math.round(F.mood * 100)} % arbejdstempo` : '🟢 = hvor man står'}`
         : `<b>${F.icon} ${F.name}</b> · <span class="bad">${this.why}</span>`;
       $('#buildbar .bbtns').innerHTML = `<button class="btn ghost" data-b="cancel">✕</button><button class="btn ghost" data-b="rotate">↻ Drej</button>
         <button class="btn ok" data-b="confirm" ${this.ok ? '' : 'disabled'}>✓ Placér</button>`;

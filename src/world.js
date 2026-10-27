@@ -314,6 +314,7 @@ export class World {
       g.add(box);
       return { g, box };
     }
+    if (FURNITURE[type].decor) return { g: this.makeDecor(type, g) };
     for (const [px, pz] of [[-0.72, -0.32], [0.72, -0.32], [-0.72, 0.32], [0.72, 0.32]]) g.add(at(rbox(0.07, 0.74, 0.07, '#adb5bd', 0.02), px, 0.37, pz));
     g.add(at(rbox(1.6, 0.08, 0.8, '#f4f1de', 0.03), 0, 0.76, 0));
     g.add(at(rbox(0.12, 0.25, 0.08, '#495057', 0.02), 0, 0.92, -0.25));
@@ -323,6 +324,49 @@ export class World {
     g.add(at(rbox(0.5, 0.03, 0.16, '#dee2e6', 0.01), 0, 0.81, 0.08));
     g.add(at(rbox(0.12, 0.12, 0.12, i === 0 ? '#ff8fab' : '#90e0ef', 0.04), 0.6, 0.86, -0.15));
     return { g, screenMat };
+  }
+
+  makeDecor(type, g) {
+    const cyl = (rt, rb, h, c) => new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 14), mat(c));
+    const ball = (r, c) => new THREE.Mesh(new THREE.SphereGeometry(r, 14, 12), mat(c));
+    if (type === 'plant') {
+      g.add(at(cyl(0.24, 0.18, 0.4, '#e07a5f'), 0, 0.2, 0));
+      g.add(at(ball(0.34, '#40916c'), 0, 0.7, 0));
+      g.add(at(ball(0.25, '#74c69d'), 0.12, 1.02, 0.05));
+      g.add(at(ball(0.18, '#95d5b2'), -0.12, 1.2, -0.06));
+    } else if (type === 'coffee') {
+      g.add(at(rbox(1.2, 0.85, 0.7, '#8d6e63', 0.04), 0, 0.425, 0));
+      g.add(at(rbox(1.24, 0.06, 0.74, '#f4f1de', 0.02), 0, 0.88, 0));
+      g.add(at(rbox(0.38, 0.5, 0.36, '#343a40', 0.05), -0.25, 1.16, -0.08));
+      g.add(at(rbox(0.22, 0.06, 0.1, '#adb5bd', 0.02), -0.25, 1.2, 0.12));
+      for (const [x, c] of [[0.22, '#ffffff'], [0.42, '#ff8fab']]) g.add(at(cyl(0.06, 0.05, 0.12, c), x, 0.97, 0.1));
+    } else if (type === 'sofa') {
+      g.add(at(rbox(2, 0.4, 0.9, '#6c63ff', 0.1), 0, 0.3, 0));
+      g.add(at(rbox(2, 0.6, 0.25, '#5a52e0', 0.1), 0, 0.6, -0.33));
+      for (const x of [-0.92, 0.92]) g.add(at(rbox(0.22, 0.55, 0.9, '#5a52e0', 0.08), x, 0.38, 0));
+      for (const x of [-0.42, 0.42]) g.add(at(rbox(0.78, 0.14, 0.62, '#8b85ff', 0.06), x, 0.55, 0.06));
+      g.add(at(rbox(0.36, 0.3, 0.12, '#ffc300', 0.06), -0.6, 0.72, -0.12));
+    } else if (type === 'speaker') {
+      g.add(at(rbox(0.5, 1.1, 0.45, '#2b2d42', 0.06), 0, 0.55, 0));
+      for (const [y, r] of [[0.38, 0.17], [0.82, 0.1]]) {
+        const c = cyl(r, r, 0.04, '#8d99ae');
+        c.rotation.x = Math.PI / 2;
+        g.add(at(c, 0, y, 0.23));
+      }
+    } else if (type === 'foosball') {
+      for (const [px, pz] of [[-0.6, -0.32], [0.6, -0.32], [-0.6, 0.32], [0.6, 0.32]]) g.add(at(rbox(0.1, 0.75, 0.1, '#5c4033', 0.02), px, 0.375, pz));
+      g.add(at(rbox(1.5, 0.22, 0.9, '#7f5539', 0.04), 0, 0.85, 0));
+      g.add(at(rbox(1.36, 0.02, 0.76, '#2a9d8f', 0.01), 0, 0.97, 0));
+      for (let i = 0; i < 4; i++) {
+        const x = -0.5 + i * 0.33, rod = cyl(0.02, 0.02, 1.2, '#ced4da');
+        rod.rotation.x = Math.PI / 2;
+        g.add(at(rod, x, 1.04, 0));
+        for (const z of [-0.2, 0.2]) g.add(at(rbox(0.06, 0.14, 0.06, i % 2 ? '#e63946' : '#457b9d', 0.02), x, 1.0, z));
+      }
+      g.add(at(ball(0.04, '#ffffff'), 0.05, 1.0, 0.05));
+    }
+    g.traverse((m) => { m.castShadow = true; });
+    return g;
   }
 
   rebuild() {
@@ -335,12 +379,13 @@ export class World {
     this.zones = [{ type: 'delivery', x: DELIVERY_SPOT.x, z: DELIVERY_SPOT.z, r: 1.3 }];
     const lists = { shelf: this.shelves, table: this.tables, desk: this.desks };
     for (const f of s.furniture) {
-      const list = lists[f.type], i = list.length;
+      const list = lists[f.type], i = list?.length ?? 0;
       const { g, ...parts } = this.makeFurniture(f.type, i);
       g.position.set(f.x, 0, f.z);
       g.rotation.y = (f.rot * Math.PI) / 2;
       this.stations.add(g);
       const fp = footprint(f.type, f.x, f.z, f.rot);
+      if (!list) { this.obstacles.push(fp.box); continue; }
       list.push({ i, id: f.id, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, ...parts });
       this.obstacles.push(fp.box);
       this.zones.push({ type: f.type, idx: i, x: fp.ax, z: fp.az, r: FURNITURE[f.type].r });
@@ -351,13 +396,13 @@ export class World {
 
   // Can this piece go here? Checks walls, overlaps, room in front and that every station stays reachable.
   canPlace(type, x, z, rot, ignoreId) {
-    const fp = footprint(type, x, z, rot), b = fp.box;
+    const fp = footprint(type, x, z, rot), b = fp.box, decor = FURNITURE[type].decor;
     if (b.minX < 0.05 || b.maxX > W - 0.05 || b.minZ < 0.05 || b.maxZ > D - 0.05) return { ok: false, why: 'Uden for rummet' };
-    if (fp.ax < 0.35 || fp.ax > W - 0.35 || fp.az < 0.35 || fp.az > D - 0.35) return { ok: false, why: 'Der skal være plads foran' };
+    if (!decor && (fp.ax < 0.35 || fp.ax > W - 0.35 || fp.az < 0.35 || fp.az > D - 0.35)) return { ok: false, why: 'Der skal være plads foran' };
     const others = this.s.furniture.filter((f) => f.id !== ignoreId).map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
     const solid = [...this.staticObstacles, ...others.map((o) => o.fp.box)];
     if ([...solid, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05))) return { ok: false, why: 'Der står noget i vejen' };
-    if (solid.some((o) => inside(o, fp.ax, fp.az, 0.3))) return { ok: false, why: 'Der skal være plads foran' };
+    if (!decor && solid.some((o) => inside(o, fp.ax, fp.az, 0.3))) return { ok: false, why: 'Der skal være plads foran' };
     // Flood-fill from the receiving area: every access point must still be reachable.
     const grid = this.makeGrid([...solid, b]), seen = new Uint8Array(NX * NZ);
     const start = this.cellOf(DELIVERY_SPOT.x, DELIVERY_SPOT.z), q = [start];
@@ -371,7 +416,7 @@ export class World {
     }
     // The cell right at an access point can sit in the inflated margin, so accept a neighbour.
     const reach = (ax, az) => [-0.5, 0, 0.5].some((dx) => [-0.5, 0, 0.5].some((dz) => seen[this.cellOf(ax + dx, az + dz)]));
-    if (!reach(fp.ax, fp.az) || others.some((o) => !reach(o.fp.ax, o.fp.az))) return { ok: false, why: 'Det spærrer vejen' };
+    if ((!decor && !reach(fp.ax, fp.az)) || others.some((o) => !FURNITURE[o.f.type].decor && !reach(o.fp.ax, o.fp.az))) return { ok: false, why: 'Det spærrer vejen' };
     return { ok: true, fp };
   }
 
@@ -590,11 +635,26 @@ export class World {
         this.boxMeshes.set(b.id, m);
         m.scale.setScalar(0.01);
       }
-      const sl = BOX_SLOTS[b.slot];
+      const sl = b.at ?? BOX_SLOTS[b.slot];
       m.position.set(sl.x, 0, sl.z);
       m.scale.setScalar(Math.min(1, m.scale.x + dt * 4));
     }
     for (const [id, m] of this.boxMeshes) if (!live.has(id)) { this.scene.remove(m); this.boxMeshes.delete(id); }
+
+    // Picked items someone put down on the floor
+    const dsig = s.drops.map((d) => `${d.id}:${d.x},${d.z}:${d.orderIds.join('.')}`).join('|');
+    if (dsig !== this.dropSig) {
+      this.dropSig = dsig;
+      if (this.dropGroup) this.scene.remove(this.dropGroup);
+      this.dropGroup = new THREE.Group();
+      for (const d of s.drops) {
+        d.orderIds.forEach((id, i) => {
+          const o = s.orders.find((x) => x.id === id);
+          this.dropGroup.add(at(rbox(0.36, 0.13, 0.3, productById[o?.productId]?.color || '#fff', 0.04), d.x + (i % 2) * 0.12, 0.07 + i * 0.14, d.z));
+        });
+      }
+      this.scene.add(this.dropGroup);
+    }
 
     this.parcelMeshes.forEach((m, i) => (m.visible = i < s.parcels));
 
@@ -622,7 +682,7 @@ export class World {
       }
     }
 
-    const waiting = s.boxes.filter((b) => !b.carriedBy).length;
+    const waiting = s.boxes.filter((b) => !b.carriedBy && !b.at).length;
     this.lblDelivery.set(waiting ? `📦 ${waiting}` : s.deliveries.length ? `🚚 ${s.deliveries.length} på vej` : '');
     const q = queuedCount(s);
     this.lblOrders.set(q ? `🧾 ${q} ${q === 1 ? 'ordre' : 'ordrer'}` : '');

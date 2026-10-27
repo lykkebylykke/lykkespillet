@@ -31,7 +31,7 @@ export function newState() {
     boxes: [{ id: 0, productId: 'tshirt', qty: 10, slot: 0 }],
     deliveries: [],
     // Placed furniture; `kit` holds bought pieces still waiting to be placed (the starter kit at first).
-    furniture: [], kit: { shelf: 1, table: 1, desk: 1 }, shelves: 0, tables: 0, desks: 0,
+    furniture: [], kit: { shelf: 1, table: 1, desk: 1 }, drops: [], shelves: 0, tables: 0, desks: 0,
     upg: { packTable: 0, computer: 0, storage: 0, webshop: 0, shoes: 0, trolley: 0 },
     employees: [], candidates: [],
     boosts: [], trend: null, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
@@ -64,14 +64,18 @@ export function loadState() {
         s.quest++;
         s.v = 3;
       }
+      for (const type in FURNITURE) s.kit[type] ??= 0;
       syncFurniture(s);
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;
       for (const o of s.orders) {
-        if (o.status === 'picked' && (o.by !== 'player' || !pc || pc.kind !== 'items' || !pc.orderIds.includes(o.id))) {
+        const held = o.by === 'player' && pc?.kind === 'items' && pc.orderIds.includes(o.id);
+        if (o.status === 'picked' && !held && o.by !== 'floor') {
           o.status = 'queued'; o.by = null; s.stock[o.productId] = (s.stock[o.productId] || 0) + 1;
         }
       }
+      for (const d of s.drops) { d.claimedBy = null; d.orderIds = d.orderIds.filter((id) => s.orders.some((o) => o.id === id)); }
+      s.drops = s.drops.filter((d) => d.orderIds.length);
       for (const b of s.boxes) {
         if (b.carriedBy !== 'player') b.carriedBy = null;
         b.claimedBy = null;
@@ -108,9 +112,11 @@ export const available = (s, id) => (s.stock[id] || 0) - s.orders.filter((o) => 
 export const queuedCount = (s) => s.orders.filter((o) => o.status === 'queued').length;
 export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1));
 export function syncFurniture(s) {
-  for (const [type, F] of Object.entries(FURNITURE)) s[F.key] = s.furniture.filter((f) => f.type === type).length;
+  for (const [type, F] of Object.entries(FURNITURE)) if (F.key) s[F.key] = s.furniture.filter((f) => f.type === type).length;
 }
-export const ownedFurniture = (s, type) => s[FURNITURE[type].key] + s.kit[type];
+export const ownedFurniture = (s, type) => s.furniture.filter((f) => f.type === type).length + (s.kit[type] || 0);
+// Decor makes the team happier: +x % work speed for employees.
+export const mood = (s) => s.furniture.reduce((a, f) => a + (FURNITURE[f.type].mood || 0), 0);
 export const freeBoxSlot = (s) => {
   const used = new Set(s.boxes.map((b) => b.slot));
   return BOX_SLOTS.findIndex((_, i) => !used.has(i));
@@ -161,6 +167,7 @@ export function addBoost(s, b) {
 export function takeBox(s, box, who) {
   box.carriedBy = who;
   box.claimedBy = null;
+  box.at = null;
   if (who === 'player') s.stats.boxesPicked++;
 }
 
@@ -184,6 +191,14 @@ export function claimOrder(s, who) {
   s.stock[o.productId]--;
   s.stats.itemsPicked++;
   return o;
+}
+
+// Takes up to n picked items from a pile on the floor.
+export function takeDrop(s, d, n, who) {
+  const ids = d.orderIds.splice(0, n);
+  for (const o of s.orders) if (ids.includes(o.id)) o.by = who;
+  if (!d.orderIds.length) s.drops = s.drops.filter((x) => x !== d);
+  return ids;
 }
 
 export function releaseOrders(s, ids) {

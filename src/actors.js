@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { mat, rbox, at, makeBox } from './world.js';
+import { mat, rbox, at, makeBox, W, D } from './world.js';
 import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, productById, PLAYER_NAME } from './data.js';
 import {
-  bus, capacity, stockTotal, upgVal, takeBox, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
-  addBoost, addXP, kr, activeCampaign,
+  bus, capacity, stockTotal, upgVal, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
+  addBoost, addXP, activeCampaign, mood,
 } from './state.js';
 
 const PLAYER_PACK = 1.6, EMP_PACK = 2.2;
@@ -88,17 +88,57 @@ export class Player {
     this.dropBtn.addEventListener('click', () => this.drop());
   }
 
-  // Put down whatever we hold: a box goes back to receiving, picked items go back on the shelf.
+  // Put down whatever we hold right in front of us; it stays there until someone picks it up.
   drop() {
-    const s = this.s, c = this.carry;
+    const s = this.s, c = this.carry, a = this.mesh.rotation.y;
     if (!c) return;
-    if (c.kind === 'box') { const b = s.boxes.find((x) => x.id === c.boxId); if (b) b.carriedBy = null; }
-    else releaseOrders(s, c.orderIds);
+    let x = THREE.MathUtils.clamp(this.pos.x + Math.sin(a) * 0.45, 0.3, W - 0.3), z = THREE.MathUtils.clamp(this.pos.z + Math.cos(a) * 0.45, 0.3, D - 0.3);
+    if (this.w.inObstacle(x, z)) { x = this.pos.x; z = this.pos.z; }
+    if (c.kind === 'box') {
+      const b = s.boxes.find((o) => o.id === c.boxId);
+      if (b) { b.carriedBy = null; b.at = { x, z }; b.slot = null; }
+      this.ignore = b;
+    } else {
+      for (const o of s.orders) if (c.orderIds.includes(o.id)) o.by = 'floor';
+      this.ignore = { id: s.nextId++, x, z, orderIds: [...c.orderIds] };
+      s.drops.push(this.ignore);
+    }
     if (this.heldTable != null && this.w.tableRes[this.heldTable] === 'player') this.w.tableRes[this.heldTable] = null;
     this.heldTable = null;
     this.carry = null;
     this.prog = 0;
     bus.emit('sfx', 'pop');
+  }
+
+  // Something on the floor within reach that we can pick up (not what we just put down).
+  floorItem() {
+    const s = this.s, c = this.carry, room = upgVal(s, 'trolley') - this.carriedOrders().length;
+    const near = (o) => o !== this.ignore && Math.hypot((o.at ?? o).x - this.pos.x, (o.at ?? o).z - this.pos.z) < 0.8;
+    if (!c) { const b = s.boxes.find((o) => o.at && !o.carriedBy && !o.claimedBy && near(o)); if (b) return b; }
+    if (!c || (c.kind === 'items' && room > 0)) return s.drops.find((d) => !d.claimedBy && near(d)) ?? null;
+    return null;
+  }
+
+  pickupAction(f) {
+    const s = this.s;
+    if (f.productId) return {
+      label: `Saml kasse op ${productById[f.productId].icon}`, dur: 0.35,
+      run: () => {
+        if (f.carriedBy || !s.boxes.includes(f)) return;
+        takeBox(s, f, 'player');
+        this.carry = { kind: 'box', boxId: f.id };
+        bus.emit('sfx', 'pop');
+      },
+    };
+    return {
+      label: 'Saml varer op 🛍️', dur: 0.3,
+      run: () => {
+        if (!s.drops.includes(f)) return;
+        const ids = takeDrop(s, f, upgVal(s, 'trolley') - this.carriedOrders().length, 'player');
+        this.carry = { kind: 'items', orderIds: [...this.carriedOrders(), ...ids] };
+        bus.emit('sfx', 'pop');
+      },
+    };
   }
 
   goTo(t) {
@@ -153,9 +193,11 @@ export class Player {
     if (!this.carry) setCarry(this.mesh, null);
     if (this.dropBtn.hidden === !!this.carry) this.dropBtn.hidden = !this.carry;
 
-    // zone
-    let zone = null, best = Infinity;
-    for (const z of w.zones) {
+    // zone (things on the floor come first)
+    if (this.ignore) { const o = this.ignore.productId ? this.ignore.at : this.ignore; if (!o || Math.hypot(o.x - this.pos.x, o.z - this.pos.z) > 1) this.ignore = null; }
+    const floor = this.floorItem();
+    let zone = floor, best = Infinity;
+    if (!floor) for (const z of w.zones) {
       const d = Math.hypot(z.x - this.pos.x, z.z - this.pos.z);
       if (d < z.r && d < best) { best = d; zone = z; }
     }
@@ -165,7 +207,7 @@ export class Player {
       this.heldTable = null;
     }
 
-    const act = zone ? this.actionFor(zone) : null;
+    const act = floor ? this.pickupAction(floor) : zone ? this.actionFor(zone) : null;
     animateCharacter(this.mesh, this.t, this.moving, !!this.carry, act?.working && !this.moving);
     if (act && !act.blocked && act.dur) {
       this.prog += dt;
@@ -183,7 +225,7 @@ export class Player {
     const room = upgVal(s, 'trolley') - this.carriedOrders().length;
     if (z.type === 'delivery') {
       if (c) return { label: 'Hænderne er fulde', blocked: true };
-      const box = s.boxes.find((b) => !b.carriedBy && !b.claimedBy);
+      const box = s.boxes.find((b) => !b.carriedBy && !b.claimedBy && !b.at);
       if (!box) return { label: s.deliveries.length ? '🚚 Varer er på vej…' : 'Ingen kasser – køb varer under Produkter' };
       return {
         label: `Saml kasse op ${productById[box.productId].icon}`, dur: 0.45,
@@ -278,7 +320,7 @@ class Worker {
     this.task = this.loop();
   }
 
-  get mult() { return EMP_TIERS[this.d.tier].mult * (this.d.special === 'fast' ? 1.5 : 1); }
+  get mult() { return EMP_TIERS[this.d.tier].mult * (this.d.special === 'fast' ? 1.5 : 1) * (1 + mood(this.s)); }
 
   *wait(sec) { let t = sec; while (t > 0) { t -= this.dt; yield; } }
 
@@ -320,21 +362,32 @@ class Worker {
     const s = this.s, w = this.w;
     for (;;) {
       if (!this.items.length) {
-        if (!queuedCount(s) || !w.shelves.length) { this.status = '😴'; yield* this.idle(IDLE.packer); continue; }
-        this.status = '';
-        const sh = w.nearestShelf(this.pos.x, this.pos.z);
-        yield* this.walkTo(sh.ax, sh.az);
-        yield* this.face(sh.fx, sh.fz);
         const cap = this.d.tier >= 3 ? 3 : this.d.tier >= 1 ? 2 : 1;
-        while (this.items.length < cap) {
-          const o = claimOrder(s, this.d.id);
-          if (!o) break;
-          this.working = true;
-          yield* this.wait(0.5 / this.mult);
-          this.items.push(o.id);
+        const d = s.drops.find((x) => !x.claimedBy);
+        if (d) {
+          // Someone left picked items on the floor – take those first.
+          this.status = '';
+          d.claimedBy = this.d.id;
+          yield* this.walkTo(d.x, d.z);
+          d.claimedBy = null;
+          if (s.drops.includes(d)) { yield* this.wait(0.3); this.items.push(...takeDrop(s, d, cap, this.d.id)); }
+          if (!this.items.length) continue;
+        } else {
+          if (!queuedCount(s) || !w.shelves.length) { this.status = '😴'; yield* this.idle(IDLE.packer); continue; }
+          this.status = '';
+          const sh = w.nearestShelf(this.pos.x, this.pos.z);
+          yield* this.walkTo(sh.ax, sh.az);
+          yield* this.face(sh.fx, sh.fz);
+          while (this.items.length < cap) {
+            const o = claimOrder(s, this.d.id);
+            if (!o) break;
+            this.working = true;
+            yield* this.wait(0.5 / this.mult);
+            this.items.push(o.id);
+          }
+          this.working = false;
+          if (!this.items.length) continue;
         }
-        this.working = false;
-        if (!this.items.length) continue;
       }
       let t;
       while ((t = w.tables.findIndex((_, i) => w.tableRes[i] == null)) < 0) { this.status = '⏳'; yield* this.wait(0.4); }
@@ -368,10 +421,10 @@ class Worker {
         }
         this.status = '';
         box.claimedBy = this.d.id;
-        const sl = BOX_SLOTS[box.slot];
-        yield* this.walkTo(THREE.MathUtils.clamp(sl.x, 11.5, 16), DELIVERY_SPOT.z - 0.4);
+        if (box.at) yield* this.walkTo(box.at.x, box.at.z);
+        else yield* this.walkTo(THREE.MathUtils.clamp(BOX_SLOTS[box.slot].x, 11.5, 16), DELIVERY_SPOT.z - 0.4);
         if (!s.boxes.includes(box) || box.carriedBy) { this.box = null; continue; }
-        yield* this.face(0, -1);
+        if (!box.at) yield* this.face(0, -1);
         yield* this.wait(0.4);
         takeBox(s, box, this.d.id);
         this.box = box;
@@ -425,6 +478,7 @@ class Worker {
     releaseOrders(s, this.items);
     if (this.box && s.boxes.includes(this.box)) this.box.carriedBy = null;
     for (const b of s.boxes) if (b.claimedBy === this.d.id) b.claimedBy = null;
+    for (const d of s.drops) if (d.claimedBy === this.d.id) d.claimedBy = null;
     if (this.table != null) this.w.tableRes[this.table] = null;
     this.w.scene.remove(this.mesh);
     this.bubble.remove();
