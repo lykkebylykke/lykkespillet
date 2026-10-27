@@ -82,6 +82,12 @@ export const TABLE_LVL = [1, 3, 7];
 export const DESK_SLOTS = [{ x: 1.8, z: 2 }, { x: 4.6, z: 2 }, { x: 7.4, z: 2 }, { x: 1.8, z: 4.8 }, { x: 4.6, z: 4.8 }, { x: 7.4, z: 4.8 }];
 export const DESK_COST = [0, 1000, 2000, 3500, 6000, 9000];
 export const DESK_LVL = [1, 3, 3, 5, 7, 9];
+// Furniture the player places freely. half/acc are for rotation 0 (access side faces +z).
+export const FURNITURE = {
+  shelf: { name: 'Lagerreol', icon: '🧱', key: 'shelves', cost: SHELF_COST, lvl: SHELF_LVL, slots: SHELF_SLOTS, hx: 1.35, hz: 0.4, acc: 0.85, r: 0.85 },
+  table: { name: 'Pakkebord', icon: '📦', key: 'tables', cost: TABLE_COST, lvl: TABLE_LVL, slots: TABLE_SLOTS, hx: 1.05, hz: 0.55, acc: 0.95, r: 0.85 },
+  desk: { name: 'Skrivebord', icon: '🖥️', key: 'desks', cost: DESK_COST, lvl: DESK_LVL, slots: DESK_SLOTS, hx: 0.85, hz: 0.45, acc: 0.9, r: 0.8 },
+};
 export const BOX_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 11.8 + (i % 4) * 1.3, z: 2.2 + Math.floor(i / 4) * 1.3 }));
 export const DELIVERY_SPOT = { x: 13.75, z: 5.0 };
 export const PALLET = { x: 16.6, z: 15.7 };
@@ -163,6 +169,7 @@ const empCount = (s, role) => s.employees.filter((e) => e.role === role).length;
 
 // target: world hint for quest arrow, tab: UI hint
 export const QUESTS = [
+  { text: 'Indret dit lager: placér starterkittet', goal: (s) => [s.furniture.length, 3], reward: { xp: 10 } },
   { text: 'Saml kassen op ved varemodtagelsen', goal: (s) => [s.stats.boxesPicked, 1], reward: { xp: 10 }, target: 'delivery' },
   { text: 'Læg T-shirts på lagerreolen', goal: (s) => [s.stats.unitsStocked, 10], reward: { xp: 10 }, target: 'shelf' },
   { text: 'Vent på en ordre og hent varen på reolen', goal: (s) => [s.stats.itemsPicked, 1], reward: { xp: 10 }, target: 'shelf' },
@@ -170,17 +177,17 @@ export const QUESTS = [
   { text: 'Arbejd på webshoppen ved computeren', goal: (s) => [s.stats.webshopWork, 1], reward: { money: 100 }, target: 'desk' },
   { text: 'Køb en kasse varer under Indkøb', goal: (s) => [s.stats.boxesBought, 1], reward: { money: 150 }, tab: 'buy' },
   { text: 'Send 10 ordrer', goal: (s) => [s.stats.shipped, 10], reward: { money: 300, gems: 2 } },
-  { text: 'Byg en ekstra lagerreol', goal: (s) => [s.shelves, 2], reward: { money: 300 }, target: 'pad-shelf' },
+  { text: 'Køb og placér en ekstra lagerreol', goal: (s) => [s.shelves, 2], reward: { money: 300 }, tab: 'upgrades' },
   { text: 'Ansæt en Lagerpakker', goal: (s) => [empCount(s, 'packer'), 1], reward: { money: 500 }, tab: 'staff' },
   { text: 'Opgrader pakkebordet', goal: (s) => [s.upg.packTable, 1], reward: { gems: 2 }, tab: 'upgrades' },
-  { text: 'Byg et ekstra skrivebord', goal: (s) => [s.desks, 2], reward: { money: 400 }, target: 'pad-desk' },
+  { text: 'Køb og placér et ekstra skrivebord', goal: (s) => [s.desks, 2], reward: { money: 400 }, tab: 'upgrades' },
   { text: 'Kør din første kampagne', goal: (s) => [s.stats.campaigns, 1], reward: { money: 400 }, tab: 'shop' },
   { text: 'Ansæt Stine som SoMe Manager', goal: (s) => [empCount(s, 'some'), 1], reward: { money: 600 }, tab: 'staff' },
   { text: 'Ansæt Trine i kundeservice', goal: (s) => [empCount(s, 'support'), 1], reward: { money: 500 }, tab: 'staff' },
   { text: 'Sælg 20 hoodies', goal: (s) => [s.sold.hoodie || 0, 20], reward: { money: 800 }, tab: 'products' },
   { text: 'Tjen 10.000 kr i omsætning', goal: (s) => [s.stats.revenue, 10000], reward: { gems: 3 } },
   { text: 'Ansæt en E-commerce Manager (Lasse eller Sophie)', goal: (s) => [empCount(s, 'ecom'), 1], reward: { money: 1000 }, tab: 'staff' },
-  { text: 'Byg et ekstra pakkebord', goal: (s) => [s.tables, 2], reward: { gems: 3 }, target: 'pad-table' },
+  { text: 'Køb og placér et ekstra pakkebord', goal: (s) => [s.tables, 2], reward: { gems: 3 }, tab: 'upgrades' },
   { text: 'Send 100 ordrer', goal: (s) => [s.stats.shipped, 100], reward: { money: 2000 } },
   { text: 'Ansæt en Lagermedarbejder', goal: (s) => [empCount(s, 'stocker'), 1], reward: { money: 1500 }, tab: 'staff' },
   { text: 'Ansæt 5 medarbejdere', goal: (s) => [s.employees.length, 5], reward: { gems: 5 }, tab: 'staff' },

@@ -1,10 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import {
-  SHELF_SLOTS, TABLE_SLOTS, DESK_SLOTS, BOX_SLOTS, DELIVERY_SPOT, PALLET,
-  SHELF_COST, SHELF_LVL, TABLE_COST, TABLE_LVL, DESK_COST, DESK_LVL, PRODUCTS, productById,
-} from './data.js';
-import { capacity, stockTotal, queuedCount, kr } from './state.js';
+import { BOX_SLOTS, DELIVERY_SPOT, PALLET, FURNITURE, PRODUCTS, productById } from './data.js';
+import { capacity, stockTotal, queuedCount } from './state.js';
 
 export const W = 18, D = 20;
 const CELL = 0.5, NX = W / CELL, NZ = D / CELL;
@@ -60,11 +57,18 @@ function plane(w, d, color, x, z, y = 0) {
   return m;
 }
 
-const PAD_TYPES = {
-  shelf: { slots: SHELF_SLOTS, cost: SHELF_COST, lvl: SHELF_LVL, key: 'shelves', name: 'Lagerreol', icon: '🧱' },
-  table: { slots: TABLE_SLOTS, cost: TABLE_COST, lvl: TABLE_LVL, key: 'tables', name: 'Pakkebord', icon: '📦' },
-  desk: { slots: DESK_SLOTS, cost: DESK_COST, lvl: DESK_LVL, key: 'desks', name: 'Skrivebord', icon: '🖥️' },
-};
+// Areas furniture may not cover: the receiving floor and the parcel pallet.
+const KEEP_CLEAR = [{ minX: 11, maxX: 16.6, minZ: 1.4, maxZ: 6.2 }, { minX: PALLET.x - 1.1, maxX: W, minZ: PALLET.z - 1.1, maxZ: PALLET.z + 1.1 }];
+const overlaps = (a, b, m = 0) => a.minX < b.maxX + m && a.maxX > b.minX - m && a.minZ < b.maxZ + m && a.maxZ > b.minZ - m;
+const inside = (o, x, z, m) => x > o.minX - m && x < o.maxX + m && z > o.minZ - m && z < o.maxZ + m;
+
+// Box, access point and facing for a piece of furniture at (x, z) turned rot × 90°.
+export function footprint(type, x, z, rot) {
+  const F = FURNITURE[type], odd = rot % 2, a = (rot * Math.PI) / 2;
+  const hx = odd ? F.hz : F.hx, hz = odd ? F.hx : F.hz;
+  const sin = Math.round(Math.sin(a)), cos = Math.round(Math.cos(a));
+  return { box: { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz }, ax: x + F.acc * sin, az: z + F.acc * cos, fx: -sin, fz: -cos };
+}
 
 export class World {
   constructor(canvas, s) {
@@ -93,7 +97,6 @@ export class World {
 
     this.labelsEl = document.getElementById('labels');
     this.labels = [];
-    this.padLabels = [];
     this.tableRes = [];
     this.tablePacking = [];
     this.deskActive = [];
@@ -280,28 +283,17 @@ export class World {
 
   aabb(x, z, hx, hz) { return { minX: x - hx, maxX: x + hx, minZ: z - hz, maxZ: z + hz }; }
 
-  // ---------- stations (rebuilt when something is built) ----------
-  rebuild() {
-    const s = this.s;
-    if (this.stations) this.scene.remove(this.stations);
-    this.padLabels.forEach((l) => l.remove());
-    this.padLabels = [];
-    this.stations = new THREE.Group();
-    this.scene.add(this.stations);
-    this.shelves = []; this.tables = []; this.desks = []; this.pads = [];
-    this.obstacles = [...this.staticObstacles];
-    this.zones = [{ type: 'delivery', x: DELIVERY_SPOT.x, z: DELIVERY_SPOT.z, r: 1.3 }];
-
-    const itemGeo = new RoundedBoxGeometry(0.36, 0.3, 0.46, 2, 0.06);
-    for (let i = 0; i < s.shelves; i++) {
-      const { x, z } = SHELF_SLOTS[i];
-      const g = new THREE.Group();
+  // ---------- furniture (rebuilt when something is placed) ----------
+  makeFurniture(type, i) {
+    const g = new THREE.Group();
+    if (type === 'shelf') {
       for (const [px, pz] of [[-1.27, -0.3], [1.27, -0.3], [-1.27, 0.3], [1.27, 0.3]]) g.add(at(rbox(0.08, 1.75, 0.08, '#5c677d', 0.02), px, 0.875, pz));
       const items = [];
+      this.itemGeo ??= new RoundedBoxGeometry(0.36, 0.3, 0.46, 2, 0.06);
       for (const [b, y] of [0.1, 0.5, 0.9, 1.3].entries()) {
         g.add(at(rbox(2.62, 0.06, 0.72, '#a3b1c6', 0.02), 0, y, 0));
         for (let c = 0; c < 5; c++) {
-          const m = new THREE.Mesh(itemGeo, mat('#ffffff'));
+          const m = new THREE.Mesh(this.itemGeo, mat('#ffffff'));
           m.castShadow = true;
           m.position.set(-1.04 + c * 0.52, y + 0.18, 0);
           m.visible = false;
@@ -310,18 +302,9 @@ export class World {
         }
       }
       g.add(at(rbox(2.62, 0.06, 0.72, '#a3b1c6', 0.02), 0, 1.72, 0));
-      g.position.set(x, 0, z);
-      this.stations.add(g);
-      const st = { i, x, z, ax: x, az: z + 0.85, items };
-      this.shelves.push(st);
-      this.obstacles.push(this.aabb(x, z, 1.35, 0.4));
-      this.zones.push({ type: 'shelf', idx: i, x: st.ax, z: st.az, r: 0.85 });
+      return { g, items };
     }
-    this.shelfSig = '';
-
-    for (let i = 0; i < s.tables; i++) {
-      const { x, z } = TABLE_SLOTS[i];
-      const g = new THREE.Group();
+    if (type === 'table') {
       for (const [px, pz] of [[-0.9, -0.4], [0.9, -0.4], [-0.9, 0.4], [0.9, 0.4]]) g.add(at(rbox(0.09, 0.8, 0.09, '#9c6644', 0.02), px, 0.4, pz));
       g.add(at(rbox(2, 0.1, 1, '#e9c46a', 0.04), 0, 0.83, 0));
       g.add(at(rbox(0.3, 0.2, 0.2, '#e63946', 0.05), 0.72, 0.98, -0.28));
@@ -329,53 +312,76 @@ export class World {
       const box = at(rbox(0.5, 0.38, 0.5, '#d9a066', 0.05), 0, 1.07, 0.05);
       box.visible = false;
       g.add(box);
-      g.position.set(x, 0, z);
-      this.stations.add(g);
-      this.tables.push({ i, x, z, ax: x, az: z + 0.95, box });
-      this.obstacles.push(this.aabb(x, z, 1.05, 0.55));
-      this.zones.push({ type: 'table', idx: i, x, z: z + 0.95, r: 0.85 });
+      return { g, box };
     }
+    for (const [px, pz] of [[-0.72, -0.32], [0.72, -0.32], [-0.72, 0.32], [0.72, 0.32]]) g.add(at(rbox(0.07, 0.74, 0.07, '#adb5bd', 0.02), px, 0.37, pz));
+    g.add(at(rbox(1.6, 0.08, 0.8, '#f4f1de', 0.03), 0, 0.76, 0));
+    g.add(at(rbox(0.12, 0.25, 0.08, '#495057', 0.02), 0, 0.92, -0.25));
+    g.add(at(rbox(0.8, 0.5, 0.06, '#2b2d42', 0.03), 0, 1.25, -0.26));
+    const screenMat = new THREE.MeshStandardMaterial({ color: '#1b1b2f', emissive: '#4cc9f0', emissiveIntensity: 0.15 });
+    g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.4), screenMat), 0, 1.25, -0.225));
+    g.add(at(rbox(0.5, 0.03, 0.16, '#dee2e6', 0.01), 0, 0.81, 0.08));
+    g.add(at(rbox(0.12, 0.12, 0.12, i === 0 ? '#ff8fab' : '#90e0ef', 0.04), 0.6, 0.86, -0.15));
+    return { g, screenMat };
+  }
 
-    for (let i = 0; i < s.desks; i++) {
-      const { x, z } = DESK_SLOTS[i];
-      const g = new THREE.Group();
-      for (const [px, pz] of [[-0.72, -0.32], [0.72, -0.32], [-0.72, 0.32], [0.72, 0.32]]) g.add(at(rbox(0.07, 0.74, 0.07, '#adb5bd', 0.02), px, 0.37, pz));
-      g.add(at(rbox(1.6, 0.08, 0.8, '#f4f1de', 0.03), 0, 0.76, 0));
-      g.add(at(rbox(0.12, 0.25, 0.08, '#495057', 0.02), 0, 0.92, -0.25));
-      g.add(at(rbox(0.8, 0.5, 0.06, '#2b2d42', 0.03), 0, 1.25, -0.26));
-      const screenMat = new THREE.MeshStandardMaterial({ color: '#1b1b2f', emissive: '#4cc9f0', emissiveIntensity: 0.15 });
-      g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.4), screenMat), 0, 1.25, -0.225));
-      g.add(at(rbox(0.5, 0.03, 0.16, '#dee2e6', 0.01), 0, 0.81, 0.08));
-      g.add(at(rbox(0.12, 0.12, 0.12, i === 0 ? '#ff8fab' : '#90e0ef', 0.04), 0.6, 0.86, -0.15));
-      g.position.set(x, 0, z);
+  rebuild() {
+    const s = this.s;
+    if (this.stations) this.scene.remove(this.stations);
+    this.stations = new THREE.Group();
+    this.scene.add(this.stations);
+    this.shelves = []; this.tables = []; this.desks = [];
+    this.obstacles = [...this.staticObstacles];
+    this.zones = [{ type: 'delivery', x: DELIVERY_SPOT.x, z: DELIVERY_SPOT.z, r: 1.3 }];
+    const lists = { shelf: this.shelves, table: this.tables, desk: this.desks };
+    for (const f of s.furniture) {
+      const list = lists[f.type], i = list.length;
+      const { g, ...parts } = this.makeFurniture(f.type, i);
+      g.position.set(f.x, 0, f.z);
+      g.rotation.y = (f.rot * Math.PI) / 2;
       this.stations.add(g);
-      this.desks.push({ i, x, z, ax: x, az: z + 0.9, screenMat });
-      this.obstacles.push(this.aabb(x, z, 0.85, 0.45));
-      this.zones.push({ type: 'desk', idx: i, x, z: z + 0.9, r: 0.8 });
+      const fp = footprint(f.type, f.x, f.z, f.rot);
+      list.push({ i, id: f.id, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, ...parts });
+      this.obstacles.push(fp.box);
+      this.zones.push({ type: f.type, idx: i, x: fp.ax, z: fp.az, r: FURNITURE[f.type].r });
     }
-
-    for (const [type, T] of Object.entries(PAD_TYPES)) {
-      const idx = s[T.key];
-      if (idx >= T.slots.length) continue;
-      const { x, z } = T.slots[idx];
-      const m = rbox(1.5, 0.04, 1.5, mat('#ffd166', { transparent: true, opacity: 0.75 }), 0.02);
-      m.castShadow = false;
-      m.position.set(x, 0.02, z);
-      this.stations.add(m);
-      const pad = { type, idx, x, z, cost: T.cost[idx], lvl: T.lvl[idx], name: T.name, icon: T.icon, key: T.key, mesh: m };
-      this.pads.push(pad);
-      this.zones.push({ type: 'pad', pad, x, z, r: 0.9 });
-      pad.label = this.addLabel('pad', '', new THREE.Vector3(x, 0.4, z));
-      this.padLabels.push(pad.label);
-    }
+    this.shelfSig = '';
     this.buildGrid();
+  }
+
+  // Can this piece go here? Checks walls, overlaps, room in front and that every station stays reachable.
+  canPlace(type, x, z, rot, ignoreId) {
+    const fp = footprint(type, x, z, rot), b = fp.box;
+    if (b.minX < 0.05 || b.maxX > W - 0.05 || b.minZ < 0.05 || b.maxZ > D - 0.05) return { ok: false, why: 'Uden for rummet' };
+    if (fp.ax < 0.35 || fp.ax > W - 0.35 || fp.az < 0.35 || fp.az > D - 0.35) return { ok: false, why: 'Der skal være plads foran' };
+    const others = this.s.furniture.filter((f) => f.id !== ignoreId).map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
+    const solid = [...this.staticObstacles, ...others.map((o) => o.fp.box)];
+    if ([...solid, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05))) return { ok: false, why: 'Der står noget i vejen' };
+    if (solid.some((o) => inside(o, fp.ax, fp.az, 0.3))) return { ok: false, why: 'Der skal være plads foran' };
+    // Flood-fill from the receiving area: every access point must still be reachable.
+    const grid = this.makeGrid([...solid, b]), seen = new Uint8Array(NX * NZ);
+    const start = this.cellOf(DELIVERY_SPOT.x, DELIVERY_SPOT.z), q = [start];
+    seen[start] = 1;
+    while (q.length) {
+      const c = q.pop(), ci = c % NX, cj = (c / NX) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const i = ci + di, j = cj + dj, n = j * NX + i;
+        if (i >= 0 && j >= 0 && i < NX && j < NZ && !grid[n] && !seen[n]) { seen[n] = 1; q.push(n); }
+      }
+    }
+    // The cell right at an access point can sit in the inflated margin, so accept a neighbour.
+    const reach = (ax, az) => [-0.5, 0, 0.5].some((dx) => [-0.5, 0, 0.5].some((dz) => seen[this.cellOf(ax + dx, az + dz)]));
+    if (!reach(fp.ax, fp.az) || others.some((o) => !reach(o.fp.ax, o.fp.az))) return { ok: false, why: 'Det spærrer vejen' };
+    return { ok: true, fp };
   }
 
   buildLabels() {
     this.lblDelivery = this.addLabel('bubble', '', new THREE.Vector3(13.75, 1.4, 2.85));
-    this.lblOrders = this.addLabel('bubble', '', new THREE.Vector3(15.6, 1.9, 9));
-    this.lblStock = this.addLabel('bubble', '', new THREE.Vector3(4.75, 2.5, 9.2));
-    this.lblTickets = this.addLabel('bubble', '', new THREE.Vector3(4.6, 2.2, 3.4));
+    // These follow the first table / shelf / desk wherever it was placed.
+    const above = (list, y, fallback) => () => (list()[0] ? new THREE.Vector3(list()[0].x, y, list()[0].z) : fallback);
+    this.lblOrders = this.addLabel('bubble', '', above(() => this.tables, 1.9, new THREE.Vector3(15.6, 1.9, 9)));
+    this.lblStock = this.addLabel('bubble', '', above(() => this.shelves, 2.5, new THREE.Vector3(4.75, 2.5, 9.2)));
+    this.lblTickets = this.addLabel('bubble', '', above(() => this.desks, 2.2, new THREE.Vector3(4.6, 2.2, 3.4)));
     this.lblQuest = this.addLabel('qarrow', '⬇', new THREE.Vector3(), { clamp: true });
     this.lblQuest.hidden = true;
   }
@@ -430,15 +436,15 @@ export class World {
   }
 
   // ---------- pathfinding ----------
-  buildGrid() {
-    this.grid = new Uint8Array(NX * NZ);
-    const inf = 0.3;
+  buildGrid() { this.grid = this.makeGrid(this.obstacles); }
+
+  makeGrid(obstacles) {
+    const grid = new Uint8Array(NX * NZ);
     for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
       const x = (i + 0.5) * CELL, z = (j + 0.5) * CELL;
-      for (const o of this.obstacles) {
-        if (x > o.minX - inf && x < o.maxX + inf && z > o.minZ - inf && z < o.maxZ + inf) { this.grid[j * NX + i] = 1; break; }
-      }
+      if (obstacles.some((o) => inside(o, x, z, 0.3))) grid[j * NX + i] = 1;
     }
+    return grid;
   }
 
   cellOf(x, z) {
@@ -535,21 +541,19 @@ export class World {
   questTarget(t) {
     const s = this.s;
     if (t === 'delivery') return s.boxes.length ? new THREE.Vector3(13.75, 1.4, 2.85) : null;
-    if (t === 'shelf') return new THREE.Vector3(this.shelves[0].x, 2.4, this.shelves[0].z);
-    if (t === 'table') return new THREE.Vector3(this.tables[0].x, 1.9, this.tables[0].z);
-    if (t === 'desk') return new THREE.Vector3(this.desks[0].x, 2, this.desks[0].z);
-    if (t?.startsWith('pad-')) { const p = this.pads.find((x) => x.type === t.slice(4)); return p ? new THREE.Vector3(p.x, 1.2, p.z) : null; }
+    const first = { shelf: [this.shelves, 2.4], table: [this.tables, 1.9], desk: [this.desks, 2] }[t];
+    if (first?.[0][0]) return new THREE.Vector3(first[0][0].x, first[1], first[0][0].z);
     return null;
   }
 
   // ---------- per-frame ----------
-  update(dt, playerPos, questTarget) {
+  update(dt, focus, questTarget) {
     const s = this.s, now = s.time;
     // Mobile browsers change the viewport (toolbars) without reliable resize events.
     const el = this.canvas.parentElement;
     if (el.clientWidth !== this.cw || el.clientHeight !== this.ch) this.resize();
     if (this.marker.visible) this.marker.scale.setScalar(1 + Math.sin(now * 6) * 0.12);
-    this.camTarget.lerp(new THREE.Vector3(playerPos.x, 0, playerPos.z), 1 - Math.exp(-dt * 5));
+    this.camTarget.lerp(new THREE.Vector3(focus.x, 0, focus.z), 1 - Math.exp(-dt * 5));
     this.camera.position.copy(this.camTarget).add(this.camOffset);
     this.camera.lookAt(this.camTarget);
     this.sun.position.copy(this.camTarget).add(new THREE.Vector3(7, 16, 5));
@@ -616,13 +620,6 @@ export class World {
         t.g.position.z = z + Math.min(18, 2 + (z - t.stop) * 2) * dt;
         if (t.g.position.z > 45) { t.state = 'away'; t.g.position.z = -25; if (t.again) { t.again = false; t.state = 'in'; } }
       }
-    }
-
-    // Pads
-    for (const p of this.pads) {
-      const locked = s.level < p.lvl;
-      p.mesh.material = mat(locked ? '#c9c9d6' : s.money >= p.cost ? '#ffd166' : '#ffb4a2', { transparent: true, opacity: 0.75 });
-      p.label.set(locked ? `<b>${p.icon} ${p.name}</b><span>🔒 Level ${p.lvl}</span>` : `<b>${p.icon} ${p.name}</b><span>${kr(p.cost)}</span>`);
     }
 
     const waiting = s.boxes.filter((b) => !b.carriedBy).length;

@@ -142,9 +142,7 @@ export class Player {
       const d = Math.hypot(z.x - this.pos.x, z.z - this.pos.z);
       if (d < z.r && d < best) { best = d; zone = z; }
     }
-    if (zone !== this.zone) { this.zone = zone; this.prog = 0; this.padAsked = false; }
-    // Stopping on a build pad asks before spending anything (once per visit).
-    if (zone?.type === 'pad' && !this.moving && !this.padAsked && s.level >= zone.pad.lvl) { this.padAsked = true; bus.emit('padPrompt', zone.pad); }
+    if (zone !== this.zone) { this.zone = zone; this.prog = 0; }
     if (this.heldTable != null && !(zone?.type === 'table' && zone.idx === this.heldTable && this.carry?.kind === 'items')) {
       if (w.tableRes[this.heldTable] === 'player') w.tableRes[this.heldTable] = null;
       this.heldTable = null;
@@ -243,12 +241,6 @@ export class Player {
         },
       };
     }
-    if (z.type === 'pad') {
-      const p = z.pad;
-      if (s.level < p.lvl) return { label: `🔒 Kræver level ${p.lvl}`, blocked: true };
-      if (s.money < p.cost) return { label: `Mangler ${kr(p.cost - s.money)}`, blocked: true };
-      return { label: `${p.icon} ${p.name} · ${kr(p.cost)}` };
-    }
     return null;
   }
 }
@@ -311,11 +303,11 @@ class Worker {
     const s = this.s, w = this.w;
     for (;;) {
       if (!this.items.length) {
-        if (!queuedCount(s)) { this.status = '😴'; yield* this.idle(IDLE.packer); continue; }
+        if (!queuedCount(s) || !w.shelves.length) { this.status = '😴'; yield* this.idle(IDLE.packer); continue; }
         this.status = '';
         const sh = w.nearestShelf(this.pos.x, this.pos.z);
         yield* this.walkTo(sh.ax, sh.az);
-        yield* this.face(0, -1);
+        yield* this.face(sh.fx, sh.fz);
         const cap = this.d.tier >= 3 ? 3 : this.d.tier >= 1 ? 2 : 1;
         while (this.items.length < cap) {
           const o = claimOrder(s, this.d.id);
@@ -334,7 +326,7 @@ class Worker {
       this.table = t;
       const tb = w.tables[t];
       yield* this.walkTo(tb.ax, tb.az);
-      yield* this.face(0, -1);
+      yield* this.face(tb.fx, tb.fz);
       while (this.items.length) {
         this.working = true;
         let left = (EMP_PACK * upgVal(s, 'packTable')) / this.mult;
@@ -352,7 +344,7 @@ class Worker {
     for (;;) {
       if (!this.box) {
         const box = s.boxes.find((b) => !b.carriedBy && !b.claimedBy);
-        if (!box || stockTotal(s) >= capacity(s)) {
+        if (!box || !w.shelves.length || stockTotal(s) >= capacity(s)) {
           this.status = box ? '⚠️ Lager fuldt' : '😴';
           yield* this.idle(IDLE.stocker);
           continue;
@@ -367,9 +359,10 @@ class Worker {
         takeBox(s, box, this.d.id);
         this.box = box;
       }
+      if (!w.shelves.length) { this.status = '⚠️ Ingen reol'; yield* this.idle(IDLE.stocker); continue; }
       const sh = w.nearestShelf(this.pos.x, this.pos.z);
       yield* this.walkTo(sh.ax, sh.az);
-      yield* this.face(0, -1);
+      yield* this.face(sh.fx, sh.fz);
       while (this.box && this.box.qty > 0) {
         if (stockTotal(s) >= capacity(s)) { this.status = '⚠️ Lager fuldt'; this.working = false; yield* this.wait(0.5); continue; }
         this.status = '';
@@ -390,7 +383,7 @@ class Worker {
       this.status = ROLES[this.d.role].icon;
       const dk = w.desks[di];
       yield* this.walkTo(dk.ax, dk.az);
-      yield* this.face(0, -1);
+      yield* this.face(dk.fx, dk.fz);
       this.working = true;
       while (this.d.desk === di) { w.deskActive[di] = s.time; yield; }
     }

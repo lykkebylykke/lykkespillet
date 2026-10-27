@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
-  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT,
+  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE,
 } from './data.js';
 
 const SAVE_KEY = 'lykkespillet-v1';
@@ -24,13 +24,14 @@ export const newDay = () => ({ orders: 0, revenue: 0, costs: 0, lost: 0, exp: {}
 
 export function newState() {
   return {
-    v: 2, money: 1500, gems: 5, xp: 0, level: 1,
+    v: 3, money: 1500, gems: 5, xp: 0, level: 1,
     time: 0, day: 1, dayTime: 0, eventT: 200, parcelT: 0, pickupAt: 0,
     stock: {}, everStocked: {}, priceMode: {}, sold: {},
     orders: [], nextId: 1,
     boxes: [{ id: 0, productId: 'tshirt', qty: 10, slot: 0 }],
     deliveries: [],
-    shelves: 1, tables: 1, desks: 1,
+    // Placed furniture; `kit` holds bought pieces still waiting to be placed (the starter kit at first).
+    furniture: [], kit: { shelf: 1, table: 1, desk: 1 }, shelves: 0, tables: 0, desks: 0,
     upg: { packTable: 0, computer: 0, storage: 0, webshop: 0, shoes: 0, trolley: 0 },
     employees: [], candidates: [],
     boosts: [], trend: null, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
@@ -55,6 +56,15 @@ export function loadState() {
       s.stats.today.exp ??= {};
       // v1 took stock off the shelf when an order arrived; now it stays until picked.
       if (s.v < 2) { for (const o of s.orders) if (o.status === 'queued') s.stock[o.productId] = (s.stock[o.productId] || 0) + 1; s.v = 2; }
+      // v2 had fixed slots; turn them into placed furniture and skip the new placement quest.
+      if (s.v < 3) {
+        s.furniture = [];
+        for (const [type, F] of Object.entries(FURNITURE)) for (let i = 0; i < s[F.key]; i++) s.furniture.push({ id: s.nextId++, type, ...F.slots[i], rot: 0 });
+        s.kit = { shelf: 0, table: 0, desk: 0 };
+        s.quest++;
+        s.v = 3;
+      }
+      syncFurniture(s);
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;
       for (const o of s.orders) {
@@ -97,6 +107,10 @@ export const unitPrice = (s, p) => Math.round(p.price * PRICE_MODES[s.priceMode[
 export const available = (s, id) => (s.stock[id] || 0) - s.orders.filter((o) => o.productId === id && o.status === 'queued').length;
 export const queuedCount = (s) => s.orders.filter((o) => o.status === 'queued').length;
 export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1));
+export function syncFurniture(s) {
+  for (const [type, F] of Object.entries(FURNITURE)) s[F.key] = s.furniture.filter((f) => f.type === type).length;
+}
+export const ownedFurniture = (s, type) => s[FURNITURE[type].key] + s.kit[type];
 export const freeBoxSlot = (s) => {
   const used = new Set(s.boxes.map((b) => b.slot));
   return BOX_SLOTS.findIndex((_, i) => !used.has(i));

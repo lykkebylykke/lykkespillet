@@ -4,6 +4,7 @@ import { update as simUpdate } from './sim.js';
 import { World } from './world.js';
 import { Player, Crew } from './actors.js';
 import { UI } from './ui.js';
+import { Builder } from './build.js';
 
 // ---------- input: virtual joystick + keyboard ----------
 class Input {
@@ -11,7 +12,8 @@ class Input {
     this.jx = 0; this.jy = 0; this.keys = new Set();
     const joy = document.getElementById('joy'), knob = joy.querySelector('.knob');
     // A quick tap walks to that spot (onTap); press-and-drag is a joystick.
-    let id = null, ox = 0, oy = 0, t0 = 0, dragging = false, holdTimer = 0;
+    // When onDrag is set (build mode) a drag goes there instead of the joystick.
+    let id = null, ox = 0, oy = 0, lx = 0, ly = 0, t0 = 0, dragging = false, holdTimer = 0;
     const R = 55;
     const showJoy = () => {
       dragging = true;
@@ -21,15 +23,22 @@ class Input {
       knob.style.transform = 'translate(-50%,-50%)';
     };
     canvas.addEventListener('pointerdown', (e) => {
-      id = e.pointerId; ox = e.clientX; oy = e.clientY; t0 = performance.now(); dragging = false;
+      id = e.pointerId; ox = lx = e.clientX; oy = ly = e.clientY; t0 = performance.now(); dragging = false;
       clearTimeout(holdTimer);
-      holdTimer = setTimeout(() => id === e.pointerId && !dragging && showJoy(), 220);
+      holdTimer = setTimeout(() => id === e.pointerId && !dragging && !this.dragMode?.() && showJoy(), 220);
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener('pointermove', (e) => {
       if (e.pointerId !== id) return;
       let dx = e.clientX - ox, dy = e.clientY - oy;
       const d = Math.hypot(dx, dy);
+      if (this.dragMode?.()) {
+        if (!dragging && d < 10) return;
+        dragging = true;
+        this.onDrag?.(lx, ly, e.clientX, e.clientY);
+        lx = e.clientX; ly = e.clientY;
+        return;
+      }
       if (!dragging) { if (d < 10) return; showJoy(); }
       if (d > R) { dx *= R / d; dy *= R / d; }
       this.jx = dx / R; this.jy = dy / R;
@@ -90,13 +99,19 @@ function boot() {
   const player = new Player(world, s);
   const crew = new Crew(world, s);
   const ui = new UI(s, world);
+  const builder = new Builder(world, s, player);
   const input = new Input(canvas);
+  input.dragMode = () => builder.active;
+  input.onDrag = (ax, ay, bx, by) => builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by));
   input.onTap = (cx, cy) => {
     if (ui.sheetOpen) return;
     const p = world.screenToGround(cx, cy);
-    if (p) player.goTo(world.walkTarget(p));
+    if (builder.active) builder.onTap(p);
+    else if (p) player.goTo(world.walkTarget(p));
   };
-  window.__game = { s, world, player, crew, ui };
+  window.__game = { s, world, player, crew, ui, builder };
+  // A brand-new shop starts by placing the starter kit.
+  if (!s.furniture.length && builder.kitCount()) builder.kit();
 
   bus.on('built', () => world.rebuild());
   bus.on('levelup', () => world.rebuild());
@@ -108,10 +123,11 @@ function boot() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     simUpdate(s, dt);
-    player.update(dt, ui.sheetOpen ? { x: 0, z: 0 } : input.dir);
+    player.update(dt, ui.sheetOpen || builder.active ? { x: 0, z: 0 } : input.dir);
+    builder.update(player.pos);
     crew.update(dt);
     ui.update(dt);
-    world.update(dt, player.pos, ui.questTarget());
+    world.update(dt, builder.focus, builder.active ? null : ui.questTarget());
     world.render();
     if ((saveT += dt) > 5) { saveT = 0; saveState(s); }
     requestAnimationFrame(frame);

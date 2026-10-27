@@ -1,9 +1,9 @@
 import {
-  DAY_LENGTH, rentOf, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, PLAYER_NAME,
+  DAY_LENGTH, rentOf, FURNITURE, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, PLAYER_NAME,
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
-  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available,
+  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP,
 } from './state.js';
 
 export function effects(s) {
@@ -38,6 +38,15 @@ export function startCampaign(s, c) {
   s.stats.campaigns++;
   bus.emit('toast', `${c.icon} ${c.name} er i gang! Ordrerne vælter ind – løb, ${PLAYER_NAME}! 🏃‍♀️`, 'event');
   bus.emit('sfx', 'fanfare');
+  return true;
+}
+
+// Buys the next piece of furniture into the kit; the player then places it.
+export function buyFurniture(s, type) {
+  const F = FURNITURE[type], n = ownedFurniture(s, type);
+  if (n >= F.cost.length || s.level < F.lvl[n] || !spend(s, F.cost[n], 'invest')) return false;
+  s.kit[type]++;
+  addXP(s, 15);
   return true;
 }
 
@@ -188,9 +197,11 @@ export function advisor(s) {
   const lostQueue = s.recentLost.filter((x) => x.why === 'queue');
   const deskless = s.employees.find((e) => ROLES[e.role].desk && e.desk == null);
 
+  const kit = Object.values(s.kit).reduce((a, b) => a + b, 0);
+  if (kit) return { text: `${kit} ${kit === 1 ? 'møbel venter' : 'møbler venter'} på at blive placeret → tryk 📦 Placér`, tab: null };
   if (!listed(s).length) return { text: 'Pak kassen ud og læg varerne på reolen for at åbne webshoppen', tab: null };
   if (s.money < 0) return { text: 'Negativ saldo! Sælg mere eller skær ned på lønudgifter', tab: 'staff' };
-  if (deskless) return { text: `${deskless.name} mangler et skrivebord → byg et på det gule felt i kontoret`, tab: null };
+  if (deskless) return { text: `${deskless.name} mangler et skrivebord → køb et under Indretning`, tab: 'upgrades' };
   if (activeCampaign(s) && q >= 3) return { text: `${s.campaign.icon} Kampagne! Ordrerne vælter ind – løb, ${PLAYER_NAME}! 🏃‍♀️`, tab: null };
   if (s.tickets >= 5) return s.level >= ROLES.support.lvl && !has('support')
     ? { text: 'For mange kundehenvendelser → ansæt kundeservice', tab: 'staff' }
@@ -206,7 +217,7 @@ export function advisor(s) {
   if (lostQueue.length || q >= 6) {
     if (s.level >= ROLES.packer.lvl && s.employees.filter((e) => e.role === 'packer').length < s.tables)
       return { text: 'For mange ordrer i kø → ansæt en lagerpakker', tab: 'staff' };
-    if (s.tables < TABLE_SLOTS.length && s.level >= 3) return { text: 'Pakningen er flaskehalsen → byg et pakkebord mere', tab: null };
+    if (s.tables < TABLE_SLOTS.length && s.level >= 3) return { text: 'Pakningen er flaskehalsen → køb et pakkebord mere', tab: 'upgrades' };
     return { text: 'Pakning går for langsomt → opgrader pakkebordet', tab: 'upgrades' };
   }
   if (q <= 1 && stock > 5) {

@@ -1,12 +1,12 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign, assignDesks,
+  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture,
 } from './state.js';
-import { effects, buyStock, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate } from './sim.js';
+import { effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate } from './sim.js';
 
 const TABS = [
   ['home', '🏠', 'Hjem'], ['staff', '👥', 'Ansatte'], ['orders', '🧾', 'Ordrer'], ['products', '👕', 'Produkter'],
@@ -64,8 +64,7 @@ export class UI {
     bus.on('levelup', (l) => this.levelUp(l));
     bus.on('dayEnd', (r) => this.toast(dayReport(r), 'day', 5000));
     bus.on('ship', (rev, pos) => { this.w.popup(`+${fmt(rev)} kr`, pos, 'money'); bus.emit('sfx', 'coin'); });
-    bus.on('built', (p) => { this.toast(`🎉 ${p.name} bygget!`, 'good'); bus.emit('sfx', 'level'); });
-    bus.on('padPrompt', (p) => this.padPrompt(p));
+    bus.on('built', (p) => { this.toast(`${p.icon} ${p.name} ${p.moved ? 'flyttet' : 'placeret'}!`, 'good'); bus.emit('sfx', p.moved ? 'pop' : 'level'); });
     bus.on('hired', (e) => this.toast(`👋 ${e.name} er startet som ${ROLES[e.role].name}!`, 'good'));
   }
 
@@ -94,7 +93,10 @@ export class UI {
     }
     if (cmd === 'camp') startCampaign(s, CAMPAIGNS.find((c) => c.id === x));
     if (cmd === 'claim') this.claimQuest();
-    if (cmd === 'build') this.buildPad(x, +y);
+    if (cmd === 'furn') {
+      if (buyFurniture(s, x)) { this.open('home'); bus.emit('placeStart', x); return; }
+      this.toast('Ikke nok penge 💸', 'bad');
+    }
     if (cmd === 'ptab') this.prodTab = x;
     if (cmd === 'advisor' && x) this.open(x);
     if (cmd === 'closeModal') $('#modal').classList.remove('show');
@@ -138,28 +140,6 @@ export class UI {
     s.quest++;
     this.toast(`🎯 Mål klaret! ${rewardText(r)}`, 'good');
     bus.emit('sfx', 'level');
-  }
-
-  // ---------- build pads ----------
-  padPrompt(p) {
-    const s = this.s, can = s.money >= p.cost;
-    const what = { shelf: `+${upgVal(s, 'storage')} pladser på lageret`, table: 'Ét pakkebord mere – flere kan pakke på samme tid', desk: 'Plads til en medarbejder mere på kontoret' }[p.type];
-    $('#modal').innerHTML = `<div class="card-modal">
-      <div class="burst">${p.icon}</div><h2>${p.name}</h2><p>${what}</p>
-      <div class="mbtns"><button class="btn ghost big" data-act="closeModal">Nej tak</button>
-        <button class="btn big" data-act="build:${p.type}:${p.idx}" ${can ? '' : 'disabled'}>${can ? `Køb · ${kr(p.cost)}` : `Mangler ${kr(p.cost - s.money)}`}</button></div></div>`;
-    $('#modal').classList.add('show');
-  }
-
-  buildPad(type, idx) {
-    const s = this.s, p = this.w.pads.find((x) => x.type === type && x.idx === idx);
-    $('#modal').classList.remove('show');
-    if (!p || s.level < p.lvl) return;
-    if (!spend(s, p.cost, 'invest')) { this.toast('Ikke nok penge 💸', 'bad'); return; }
-    s[p.key]++;
-    assignDesks(s);
-    addXP(s, 15);
-    bus.emit('built', p);
   }
 
   // ---------- notifications ----------
@@ -372,7 +352,15 @@ export class UI {
 
   r_upgrades() {
     const s = this.s;
-    return `<p class="tip">🟨 Nye reoler, pakkeborde og skriveborde bygges ved at stille dig på de gule felter i spillet.</p>` +
+    const furn = Object.entries(FURNITURE).map(([type, F]) => {
+      const n = ownedFurniture(s, type), max = F.cost.length, cost = F.cost[n], lvl = F.lvl[n];
+      return `<div class="card"><div class="av">${F.icon}</div>
+        <div class="info"><b>${F.name}</b><small>Du har ${n} af ${max}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small></div>
+        <div class="btns">${n >= max ? '<span class="tag gold">MAX</span>'
+          : s.level < lvl ? `<span class="tag">🔒 Lvl ${lvl}</span>`
+          : `<button class="btn" data-act="furn:${type}" ${s.money < cost ? 'disabled' : ''}>Køb<small>${kr(cost)}</small></button>`}</div></div>`;
+    }).join('');
+    return `<h3>🛠️ Indretning</h3><p class="tip">Køb møbler og placér dem selv. Med 🛠️ Indret-knappen kan du flytte og dreje alt.</p>${furn}<h3>⬆️ Opgraderinger</h3>` +
       Object.entries(UPGRADES).map(([k, U]) => {
         const cur = U.levels[s.upg[k]], next = U.levels[s.upg[k] + 1];
         const dots = U.levels.map((_, i) => `<i class="${i <= s.upg[k] ? 'on' : ''}"></i>`).join('');
