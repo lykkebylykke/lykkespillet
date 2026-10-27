@@ -194,7 +194,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 .btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #d93d6f; }
 .btn:disabled { background: #d9d4e3; box-shadow: 0 3px 0 #bcb6c9; color: #fff; cursor: default; }
 .btn.ghost { background: #f1edf7; color: var(--muted); box-shadow: none; }
-.btn.gem { background: var(--blue); box-shadow: 0 3px 0 #2f6ad1; }
+.btn.gem { background: #e63973; box-shadow: 0 3px 0 #b8255a; }
 .btn.claim { background: var(--green); box-shadow: 0 3px 0 #1d8a55; font-size: 11.5px; padding: 6px 9px; }
 .btn.big { font-size: 17px; padding: 11px 30px; }
 .btn.wide { width: 100%; margin-top: 18px; }

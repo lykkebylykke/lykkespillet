@@ -34,14 +34,8 @@ export class UI {
         <div class="top">
           <div class="chip money"><span>💰</span><b id="h-money"></b></div>
           <div class="chip level"><div class="lvl" id="h-lvl"></div><div class="xpbar"><i id="h-xp"></i></div></div>
-          <div class="chip"><span>💎</span><b id="h-gems"></b></div>
+          <div class="chip"><span>❤️</span><b id="h-gems"></b></div>
           <div class="chip"><span>👥</span><b id="h-staff"></b></div>
-        </div>
-        <div class="kpis">
-          <div class="kpi"><small>Ordrer i kø</small><b id="k-queue"></b></div>
-          <div class="kpi"><small>Ordrer i dag</small><b id="k-today"></b></div>
-          <div class="kpi"><small>Omsætning i dag</small><b id="k-rev"></b></div>
-          <div class="kpi"><small>Lager</small><b id="k-stock"></b></div>
         </div>
         <div class="dayrow"><span id="h-day"></span><div class="daybar"><i id="h-daybar"></i></div></div>
         <div id="quest" class="quest"></div>
@@ -92,7 +86,7 @@ export class UI {
     }
     if (cmd === 'shop') {
       const item = SHOP.find((i) => i.id === x);
-      if (buyShop(s, item)) this.toast(`${item.icon} ${item.name} aktiveret!`, 'good'); else this.toast('Ikke nok 💰/💎', 'bad');
+      if (buyShop(s, item)) this.toast(`${item.icon} ${item.name} aktiveret!`, 'good'); else this.toast('Ikke nok 💰/❤️', 'bad');
     }
     if (cmd === 'camp') startCampaign(s, CAMPAIGNS.find((c) => c.id === x));
     if (cmd === 'claim') this.claimQuest();
@@ -154,7 +148,7 @@ export class UI {
     bus.emit('sfx', 'fanfare');
     const un = unlocksAt(l);
     $('#modal').innerHTML = `<div class="card-modal">
-      <div class="burst">🎉</div><h2>Level ${l}!</h2><p>+3 💎</p>
+      <div class="burst">🎉</div><h2>Level ${l}!</h2><p>+3 ❤️</p>
       ${un.length ? `<h4>Låst op</h4><ul>${un.map((u) => `<li>${u}</li>`).join('')}</ul>` : ''}
       <button class="btn big" data-act="closeModal">Fedt!</button></div>`;
     $('#modal').classList.add('show');
@@ -175,12 +169,6 @@ export class UI {
     $('#h-xp').style.width = s.level >= MAX_LEVEL ? '100%' : `${(s.xp / xpFor(s.level)) * 100}%`;
     $('#h-gems').textContent = s.gems;
     $('#h-staff').textContent = s.employees.length;
-    $('#k-queue').textContent = queuedCount(s);
-    $('#k-today').textContent = s.stats.today.orders;
-    $('#k-rev').textContent = kr(s.stats.today.revenue);
-    const st = stockTotal(s), cap = capacity(s);
-    $('#k-stock').textContent = `${st}/${cap}`;
-    $('#k-stock').classList.toggle('hot', st >= cap);
     $('#h-day').textContent = `Dag ${s.day}`;
     $('#h-daybar').style.width = `${(s.dayTime / DAY_LENGTH) * 100}%`;
 
@@ -316,12 +304,12 @@ export class UI {
     return `<h3>📣 Kampagner</h3>
       <p class="tip">Sæt priserne ned og få mange flere ordrer – men mindre fortjeneste pr. vare. Sørg for at lageret er fyldt og at I kan pakke hurtigt nok! Hver E-commerce Manager gør kampagner 25 % længere.</p>${camps}
       <h3>🛍️ Butik</h3>
-      <p class="tip">Du har <b>💎 ${s.gems}</b> – du får 3 💎 for hvert level og flere for mål.</p>` + SHOP.map((i) => {
+      <p class="tip">Du har <b>❤️ ${s.gems}</b> – du får 3 ❤️ for hvert level og flere for mål.</p>` + SHOP.map((i) => {
       if (i.lvl > s.level) return `<div class="locked">🔒 ${i.icon} ${i.name} · Level ${i.lvl}</div>`;
       const can = i.money ? s.money >= i.money : s.gems >= i.gems;
       const active = s.boosts.find((b) => b.id === i.id);
       return `<div class="card"><div class="av">${i.icon}</div><div class="info"><b>${i.name}</b><small>${i.desc}</small>${active ? `<small class="eff">Aktiv · ${Math.ceil(active.until - s.time)}s tilbage</small>` : ''}</div>
-        <div class="btns"><button class="btn ${i.gems ? 'gem' : ''}" data-act="shop:${i.id}" ${can ? '' : 'disabled'}>${i.money ? kr(i.money) : `💎 ${i.gems}`}</button></div></div>`;
+        <div class="btns"><button class="btn ${i.gems ? 'gem' : ''}" data-act="shop:${i.id}" ${can ? '' : 'disabled'}>${i.money ? kr(i.money) : `❤️ ${i.gems}`}</button></div></div>`;
     }).join('');
   }
 
@@ -368,6 +356,6 @@ export class UI {
 }
 
 function rewardText(r) {
-  return [r.money && `💰 ${fmt(r.money)}`, r.gems && `💎 ${r.gems}`, r.xp && `⭐ ${r.xp} XP`].filter(Boolean).join(' ');
+  return [r.money && `💰 ${fmt(r.money)}`, r.gems && `❤️ ${r.gems}`, r.xp && `⭐ ${r.xp} XP`].filter(Boolean).join(' ');
 }
 const fmtGoal = (n) => (n >= 10000 ? fmt(n) : n);
