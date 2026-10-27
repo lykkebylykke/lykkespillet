@@ -1,0 +1,235 @@
+import {
+  PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
+  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor,
+} from './data.js';
+
+const SAVE_KEY = 'lykkespillet-v1';
+
+export const bus = {
+  l: {},
+  on(e, f) { (this.l[e] ??= []).push(f); },
+  emit(e, ...a) { (this.l[e] || []).forEach((f) => f(...a)); },
+};
+
+export const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+export function fmt(n) {
+  const a = Math.abs(n);
+  if (a >= 1e6) return (n / 1e6).toLocaleString('da-DK', { maximumFractionDigits: 2 }) + ' mio.';
+  return Math.round(n).toLocaleString('da-DK');
+}
+export const kr = (n) => `${fmt(n)} kr`;
+
+export function newState() {
+  return {
+    v: 1, money: 1500, gems: 5, xp: 0, level: 1,
+    time: 0, day: 1, dayTime: 0, eventT: 200, parcelT: 0, pickupAt: 0,
+    stock: {}, everStocked: {}, priceMode: {}, sold: {},
+    orders: [], nextId: 1,
+    boxes: [{ id: 0, productId: 'tshirt', qty: 10, slot: 0 }],
+    deliveries: [],
+    shelves: 1, tables: 1, desks: 1,
+    upg: { packTable: 0, computer: 0, storage: 0, webshop: 0, shoes: 0, trolley: 0 },
+    employees: [], candidates: [],
+    boosts: [], trend: null, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
+    satisfaction: 80, parcels: 0,
+    player: { x: 14, z: 7, carry: null },
+    quest: 0,
+    recentLost: [],
+    stats: {
+      shipped: 0, revenue: 0, lost: 0, boxesPicked: 0, unitsStocked: 0, itemsPicked: 0,
+      webshopWork: 0, boxesBought: 0, campaigns: 0, ticketsSolved: 0, history: [],
+      today: { orders: 0, revenue: 0, costs: 0, lost: 0 },
+    },
+  };
+}
+
+export function loadState() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (raw) {
+      const s = Object.assign(newState(), JSON.parse(raw));
+      // Runtime claims don't survive a reload; employees restart their tasks.
+      const pc = s.player.carry;
+      for (const o of s.orders) {
+        if (o.by !== 'player' || !pc || pc.kind !== 'items' || !pc.orderIds.includes(o.id)) { o.status = 'queued'; o.by = null; }
+      }
+      for (const b of s.boxes) {
+        if (b.carriedBy !== 'player') b.carriedBy = null;
+        b.claimedBy = null;
+      }
+      return s;
+    }
+  } catch (e) { console.warn('Kunne ikke indlæse gemt spil', e); }
+  const s = newState();
+  refreshCandidates(s);
+  return s;
+}
+
+let resetting = false;
+export function saveState(s) {
+  if (resetting) return;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(s)); } catch { /* storage unavailable */ }
+}
+
+export function resetState() {
+  resetting = true;
+  try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
+  location.reload();
+}
+
+// ---------- derived values ----------
+export const upgVal = (s, key) => UPGRADES[key].levels[s.upg[key]].val;
+export const capacity = (s) => s.shelves * upgVal(s, 'storage');
+export const stockTotal = (s) => Object.values(s.stock).reduce((a, b) => a + b, 0);
+export const listed = (s) => PRODUCTS.filter((p) => p.lvl <= s.level && s.everStocked[p.id]);
+export const activeCampaign = (s) => (s.campaign && s.campaign.until > s.time ? s.campaign : null);
+export const unitPrice = (s, p) => Math.round(p.price * PRICE_MODES[s.priceMode[p.id] || 'normal'].price * (activeCampaign(s)?.price ?? 1));
+export const queuedCount = (s) => s.orders.filter((o) => o.status === 'queued').length;
+export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1));
+export const freeBoxSlot = (s) => {
+  const used = new Set(s.boxes.map((b) => b.slot));
+  return BOX_SLOTS.findIndex((_, i) => !used.has(i));
+};
+
+// ---------- economy ----------
+export function addMoney(s, amt, pos) {
+  s.money += amt;
+  bus.emit('money', amt, pos);
+}
+
+export function spend(s, amt) {
+  if (s.money < amt) return false;
+  s.money -= amt;
+  s.stats.today.costs += amt;
+  bus.emit('money', -amt);
+  return true;
+}
+
+export function addXP(s, n) {
+  if (s.level >= MAX_LEVEL) return;
+  s.xp += n;
+  while (s.level < MAX_LEVEL && s.xp >= xpFor(s.level)) {
+    s.xp -= xpFor(s.level);
+    s.level++;
+    s.gems += 3;
+    refreshCandidates(s);
+    bus.emit('levelup', s.level);
+  }
+}
+
+export function addBoost(s, b) {
+  const ex = s.boosts.find((x) => x.id === b.id);
+  if (ex) { ex.until = Math.max(ex.until, s.time + b.dur); ex.total = ex.until - s.time; return; }
+  s.boosts.push({ ...b, until: s.time + b.dur, total: b.dur });
+}
+
+// ---------- shared physical operations (player + employees) ----------
+export function takeBox(s, box, who) {
+  box.carriedBy = who;
+  box.claimedBy = null;
+  if (who === 'player') s.stats.boxesPicked++;
+}
+
+// Moves one unit from a box onto the shelves. Returns false if the warehouse is full.
+export function stockOne(s, box) {
+  if (stockTotal(s) >= capacity(s)) return false;
+  s.stock[box.productId] = (s.stock[box.productId] || 0) + 1;
+  s.everStocked[box.productId] = true;
+  s.stats.unitsStocked++;
+  box.qty--;
+  if (box.qty <= 0) s.boxes = s.boxes.filter((b) => b !== box);
+  addXP(s, 1);
+  return true;
+}
+
+export function claimOrder(s, who) {
+  const o = s.orders.find((x) => x.status === 'queued');
+  if (!o) return null;
+  o.status = 'picked';
+  o.by = who;
+  s.stats.itemsPicked++;
+  return o;
+}
+
+export function releaseOrders(s, ids) {
+  for (const o of s.orders) if (ids.includes(o.id)) { o.status = 'queued'; o.by = null; }
+}
+
+export function shipOrder(s, id, pos) {
+  const o = s.orders.find((x) => x.id === id);
+  if (!o) return;
+  s.orders = s.orders.filter((x) => x !== o);
+  const p = productById[o.productId];
+  const rev = unitPrice(s, p);
+  addMoney(s, rev, pos);
+  s.stats.shipped++;
+  s.stats.revenue += rev;
+  s.stats.today.orders++;
+  s.stats.today.revenue += rev;
+  s.sold[p.id] = (s.sold[p.id] || 0) + 1;
+  const wait = s.time - o.t;
+  s.satisfaction = Math.max(0, Math.min(100, s.satisfaction + (wait < 45 ? 0.6 : wait < 90 ? 0.1 : -1.5)));
+  s.parcels++;
+  if (Math.random() < 0.1) s.tickets++; // some customers write in
+  addXP(s, 10 + Math.round(p.price / 40));
+  bus.emit('ship', rev, pos);
+}
+
+// ---------- staff ----------
+function randomLook(name) {
+  return { skin: pick(SKINS), hair: pick(HAIRS), shirt: pick(SHIRTS), bun: name !== 'Lasse' };
+}
+
+// Named team members first, then other Danish names not already in use.
+function candidateName(s, role, taken) {
+  const used = new Set([...s.employees.map((e) => e.name), ...taken]);
+  const named = (ROSTER[role] || []).find((n) => !used.has(n));
+  if (named) return named;
+  const free = NAMES.filter((n) => !used.has(n));
+  return pick(free.length ? free : NAMES);
+}
+
+export function refreshCandidates(s) {
+  const roles = Object.keys(ROLES).filter((r) => ROLES[r].lvl <= s.level);
+  s.candidates = [];
+  if (!roles.length) return;
+  const n = Math.min(5, roles.length + 1), taken = [];
+  for (let i = 0; i < n; i++) {
+    const role = roles[i % roles.length], name = candidateName(s, role, taken);
+    taken.push(name);
+    s.candidates.push({ cid: s.nextId++, name, role, look: randomLook(name), cost: ROLES[role].hire });
+  }
+  const sp = SPECIALS.filter((x) => roles.includes(x.role) && !s.employees.some((e) => e.name === x.name));
+  if (sp.length && Math.random() < 0.2) {
+    const x = pick(sp);
+    s.candidates.unshift({ cid: s.nextId++, name: x.name, role: x.role, special: x.special, specialDesc: x.desc, look: randomLook(x.name), cost: ROLES[x.role].hire * 2 });
+  }
+}
+
+export function assignDesks(s) {
+  const used = new Set(s.employees.map((e) => e.desk).filter((d) => d != null));
+  for (const e of s.employees) {
+    if (!ROLES[e.role].desk || e.desk != null) continue;
+    for (let i = 1; i < s.desks; i++) if (!used.has(i)) { e.desk = i; used.add(i); break; }
+  }
+}
+
+export function hire(s, cid) {
+  const c = s.candidates.find((x) => x.cid === cid);
+  if (!c || !spend(s, c.cost)) return false;
+  s.candidates = s.candidates.filter((x) => x !== c);
+  const e = { id: s.nextId++, name: c.name, role: c.role, tier: 0, special: c.special || null, specialDesc: c.specialDesc || null, look: c.look, desk: null };
+  s.employees.push(e);
+  assignDesks(s);
+  bus.emit('hired', e);
+  return true;
+}
+
+export function fire(s, id) {
+  s.employees = s.employees.filter((e) => e.id !== id);
+  assignDesks(s);
+  bus.emit('fired', id);
+}
+
+export const empUpgradeCost = (e) => (e.tier >= 3 ? null : Math.round(ROLES[e.role].hire * EMP_TIERS[e.tier + 1].up));
