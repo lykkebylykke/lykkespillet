@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mat, rbox, at, makeBox } from './world.js';
 import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, productById, bossLook } from './data.js';
 import {
-  bus, capacity, stockTotal, upgVal, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
+  bus, upgVal, shelfAccepts, shelfHasOrder, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
   addBoost, addXP, activeCampaign, mood,
 } from './state.js';
 
@@ -94,9 +94,12 @@ export class Player {
     this.dropBtn = document.getElementById('dropbtn');
     this.dropBtn.addEventListener('click', () => this.drop());
     // With a packer on the team the boss only picks orders after saying yes.
-    document.getElementById('app').insertAdjacentHTML('beforeend', '<button id="pickbtn" class="fab" hidden>🛒 Pluk selv</button>');
+    document.getElementById('app').insertAdjacentHTML('beforeend', `<div id="lbtns">
+      <button id="shelfbtn" class="fab" hidden>🏷️ Reolens varer</button><button id="pickbtn" class="fab" hidden>🛒 Pluk selv</button></div>`);
     this.pickBtn = document.getElementById('pickbtn');
     this.pickBtn.addEventListener('click', () => { this.pickOk = true; bus.emit('sfx', 'click'); });
+    this.shelfBtn = document.getElementById('shelfbtn');
+    this.shelfBtn.addEventListener('click', () => this.atShelf && bus.emit('shelfMenu', this.atShelf));
   }
 
   // Put down whatever we hold right in front of us; it stays there until someone picks it up.
@@ -233,6 +236,8 @@ export class Player {
 
     const act = floor ? this.pickupAction(floor) : zone ? this.actionFor(zone) : null;
     if (this.pickBtn.hidden === this.askPick) this.pickBtn.hidden = !this.askPick;
+    this.atShelf = !floor && zone?.type === 'shelf' ? w.shelves[zone.idx]?.f : null;
+    if (this.shelfBtn.hidden === !!this.atShelf) this.shelfBtn.hidden = !this.atShelf;
     animateCharacter(this.mesh, this.t, this.moving, !!this.carry, act?.working && !this.moving);
     if (act && !act.blocked && act.dur) {
       this.prog += dt;
@@ -258,21 +263,24 @@ export class Player {
       };
     }
     if (z.type === 'shelf') {
+      const f = w.shelves[z.idx].f;
       if (c?.kind === 'box') {
-        const box = s.boxes.find((b) => b.id === c.boxId);
-        if (stockTotal(s) >= capacity(s)) return { label: 'Lageret er fuldt!', blocked: true };
+        const box = s.boxes.find((b) => b.id === c.boxId), p = productById[box.productId];
+        if (f.only && f.only !== box.productId) return { label: `Reolen er kun til ${productById[f.only].icon} ${productById[f.only].name}`, blocked: true };
+        if (!shelfAccepts(s, f, box.productId)) return { label: 'Reolen er fuld – prøv en anden', blocked: true };
         return {
-          label: `Lægger ${productById[box.productId].icon} på lager (${box.qty})`, dur: 0.12, working: true,
-          run: () => { stockOne(s, box); bus.emit('sfx', 'tick'); if (box.qty <= 0) this.carry = null; },
+          label: `Lægger ${p.icon} på reolen (${box.qty})`, dur: 0.12, working: true,
+          run: () => { if (stockOne(s, box, f)) bus.emit('sfx', 'tick'); if (box.qty <= 0) this.carry = null; },
         };
       }
       if (!queuedCount(s)) return { label: c ? `Bær varerne til pakkebordet` : 'Ingen ordrer at plukke' };
+      if (!shelfHasOrder(s, f)) return { label: c ? 'Bær varerne til pakkebordet' : 'Ordrerne skal bruge varer fra en anden reol' };
       if (room <= 0) return { label: 'Fuld – gå til pakkebordet', blocked: true };
       if (!this.pickOk && s.employees.some((e) => e.role === 'packer')) { this.askPick = true; return { label: 'Pakkeren plukker ordrerne 📦' }; }
       return {
         label: 'Plukker vare til ordre', dur: 0.35, working: true,
         run: () => {
-          const o = claimOrder(s, 'player');
+          const o = claimOrder(s, 'player', f);
           if (!o) return;
           this.carry = { kind: 'items', orderIds: [...this.carriedOrders(), o.id] };
           bus.emit('sfx', 'pop');
@@ -384,6 +392,12 @@ class Worker {
     yield* this.wait(0.8 + Math.random());
   }
 
+  // Idle packers wait by the nearest packing table, a step back from it.
+  restSpot() {
+    const t = this.w.nearestTable(this.pos.x, this.pos.z);
+    return t ? { x: t.ax - t.fx * 1.1, z: t.az - t.fz * 1.1 } : IDLE.packer;
+  }
+
   *packerLoop() {
     const s = this.s, w = this.w;
     for (;;) {
@@ -399,13 +413,14 @@ class Worker {
           if (s.drops.includes(d)) { yield* this.wait(0.3); this.items.push(...takeDrop(s, d, cap, this.d.id)); }
           if (!this.items.length) continue;
         } else {
-          if (!queuedCount(s) || !w.shelves.length) { this.status = '😴'; yield* this.idle(IDLE.packer); continue; }
+          // Go to the nearest shelf that holds something an order needs.
+          const sh = w.nearestShelf(this.pos.x, this.pos.z, (x) => shelfHasOrder(s, x.f));
+          if (!sh) { this.status = '😴'; yield* this.idle(this.restSpot()); continue; }
           this.status = '';
-          const sh = w.nearestShelf(this.pos.x, this.pos.z);
           yield* this.walkTo(sh.ax, sh.az);
           yield* this.face(sh.fx, sh.fz);
           while (this.items.length < cap) {
-            const o = claimOrder(s, this.d.id);
+            const o = claimOrder(s, this.d.id, sh.f);
             if (!o) break;
             this.working = true;
             yield* this.wait(0.5 / this.mult);
@@ -439,9 +454,10 @@ class Worker {
     const s = this.s, w = this.w;
     for (;;) {
       if (!this.box) {
-        const box = s.boxes.find((b) => !b.carriedBy && !b.claimedBy);
-        if (!box || !w.shelves.length || stockTotal(s) >= capacity(s)) {
-          this.status = box ? '⚠️ Lager fuldt' : '😴';
+        const fits = (b) => w.shelves.some((sh) => shelfAccepts(s, sh.f, b.productId));
+        const waiting = s.boxes.filter((b) => !b.carriedBy && !b.claimedBy), box = waiting.find(fits);
+        if (!box) {
+          this.status = !w.shelves.length ? '⚠️ Ingen reol' : waiting.length ? '⚠️ Ingen plads på reolerne' : '😴';
           yield* this.idle(IDLE.stocker);
           continue;
         }
@@ -455,19 +471,20 @@ class Worker {
         takeBox(s, box, this.d.id);
         this.box = box;
       }
-      if (!w.shelves.length) { this.status = '⚠️ Ingen reol'; yield* this.idle(IDLE.stocker); continue; }
-      const sh = w.nearestShelf(this.pos.x, this.pos.z);
+      // Fill the nearest shelf that takes this product; move on when it's full.
+      const pid = this.box.productId;
+      const sh = w.nearestShelf(this.pos.x, this.pos.z, (x) => shelfAccepts(s, x.f, pid));
+      if (!sh) { this.status = '⚠️ Ingen plads på reolerne'; this.working = false; yield* this.wait(0.8); continue; }
+      this.status = '';
       yield* this.walkTo(sh.ax, sh.az);
       yield* this.face(sh.fx, sh.fz);
-      while (this.box && this.box.qty > 0) {
-        if (stockTotal(s) >= capacity(s)) { this.status = '⚠️ Lager fuldt'; this.working = false; yield* this.wait(0.5); continue; }
-        this.status = '';
+      while (this.box.qty > 0 && shelfAccepts(s, sh.f, pid)) {
         this.working = true;
         yield* this.wait(0.25 / this.mult);
-        stockOne(s, this.box);
+        stockOne(s, this.box, sh.f);
       }
       this.working = false;
-      this.box = null;
+      if (this.box.qty <= 0) this.box = null;
     }
   }
 

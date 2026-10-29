@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { BOX_SLOTS, DELIVERY_SPOT, PALLET, FURNITURE, PRODUCTS, productById } from './data.js';
-import { capacity, stockTotal, queuedCount } from './state.js';
+import { capacity, stockTotal, queuedCount, shelfCap, shelfCount } from './state.js';
 
 // The lot is split into 2×2 m tiles; the shop owns the original 18×20 m and can buy more (not towards the road).
 export const TILE = 2;
@@ -415,12 +415,33 @@ export class World {
       this.stations.add(g);
       const fp = footprint(f.type, f.x, f.z, f.rot);
       if (!list) { this.obstacles.push(fp.box); continue; }
-      list.push({ i, id: f.id, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, ...parts });
+      if (f.type === 'shelf' && f.only) g.add(this.shelfSign(f.only));
+      list.push({ i, id: f.id, f, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, spots: [{ ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz }], ...parts });
       this.obstacles.push(fp.box);
       this.zones.push({ type: f.type, idx: i, x: fp.ax, z: fp.az, r: FURNITURE[f.type].r });
     }
+    // Shelves can also be used from the back when there's room to stand there.
+    for (const sh of this.shelves) {
+      const bx = 2 * sh.x - sh.ax, bz = 2 * sh.z - sh.az;
+      if (!this.isFloor(bx, bz) || this.obstacles.some((o) => inside(o, bx, bz, 0.3))) continue;
+      sh.spots.push({ ax: bx, az: bz, fx: -sh.fx, fz: -sh.fz });
+      this.zones.push({ type: 'shelf', idx: sh.i, x: bx, z: bz, r: FURNITURE.shelf.r });
+    }
     this.shelfSig = '';
     this.buildGrid();
+  }
+
+  // A sign on top of a shelf reserved for one product, readable from both sides.
+  shelfSign(pid) {
+    const p = productById[pid], g = new THREE.Group();
+    for (const r of [0, Math.PI]) {
+      const t = textPlane(`${p.icon} ${p.name}`, 2.2, 0.42, { color: '#ffffff', bg: p.color });
+      t.rotation.y = r;
+      t.position.z = r ? -0.02 : 0.02;
+      g.add(t);
+    }
+    g.position.y = 2.02;
+    return g;
   }
 
   // Can this piece go here? Checks walls, overlaps, room in front and that every station stays reachable.
@@ -608,8 +629,23 @@ export class World {
     p.z = THREE.MathUtils.clamp(p.z, LOT.z0 + r, LOT.z1 - r);
   }
 
-  nearestShelf(x, z) {
-    return this.shelves.reduce((a, b) => (Math.hypot(b.ax - x, b.az - z) < Math.hypot(a.ax - x, a.az - z) ? b : a));
+  // The nearest usable side of the nearest shelf matching ok (null if none).
+  nearestShelf(x, z, ok = () => true) {
+    let best = null, bd = Infinity;
+    for (const sh of this.shelves) {
+      if (!ok(sh)) continue;
+      for (const sp of sh.spots) {
+        const d = Math.hypot(sp.ax - x, sp.az - z);
+        if (d < bd) { bd = d; best = { ...sh, ...sp }; }
+      }
+    }
+    return best;
+  }
+
+  nearestTable(x, z) {
+    let best = null, bd = Infinity;
+    for (const t of this.tables) { const d = Math.hypot(t.ax - x, t.az - z); if (d < bd) { bd = d; best = t; } }
+    return best;
   }
 
   questTarget(t) {
@@ -634,20 +670,18 @@ export class World {
     this.sun.target.position.copy(this.camTarget);
 
     // Shelf contents
-    const cap = capacity(s), perShelf = cap / s.shelves;
-    const sig = JSON.stringify(s.stock) + cap;
+    const cap = capacity(s), per = shelfCap(s);
+    const sig = JSON.stringify(this.shelves.map((sh) => sh.f.stock)) + per;
     if (sig !== this.shelfSig) {
       this.shelfSig = sig;
-      const seq = [];
-      for (const p of PRODUCTS) seq.push([p.color, s.stock[p.id] || 0]);
-      const colorAt = (u) => { for (const [c, n] of seq) { if (u < n) return c; u -= n; } return '#ffffff'; };
-      const total = stockTotal(s);
+      // Each shelf shows its own items, grouped by product.
       for (const sh of this.shelves) {
-        const start = sh.i * perShelf, onShelf = THREE.MathUtils.clamp(total - start, 0, perShelf);
-        const shown = Math.ceil((onShelf / perShelf) * 20);
+        const seq = PRODUCTS.map((p) => [p.color, sh.f.stock?.[p.id] || 0]);
+        const colorAt = (u) => { for (const [c, n] of seq) { if (u < n) return c; u -= n; } return '#ffffff'; };
+        const shown = Math.ceil((Math.min(per, shelfCount(sh.f)) / per) * 20);
         sh.items.forEach((m, k) => {
           m.visible = k < shown;
-          if (m.visible) m.material = mat(colorAt(Math.floor(start + (k * perShelf) / 20)));
+          if (m.visible) m.material = mat(colorAt(Math.floor((k * per) / 20)));
         });
       }
     }

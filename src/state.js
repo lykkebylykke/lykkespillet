@@ -24,7 +24,7 @@ export const newDay = () => ({ orders: 0, revenue: 0, costs: 0, lost: 0, exp: {}
 
 export function newState() {
   return {
-    v: 3, money: 1500, gems: 5, xp: 0, level: 1,
+    v: 4, money: 1500, gems: 5, xp: 0, level: 1,
     time: 0, day: 1, dayTime: 0, eventT: 200, parcelT: 0, pickupAt: 0,
     stock: {}, everStocked: {}, priceMode: {}, sold: {},
     orders: [], nextId: 1,
@@ -36,7 +36,7 @@ export function newState() {
     employees: [], candidates: [],
     boosts: [], trend: null, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
     satisfaction: 80, parcels: 0,
-    loan: null, redDays: 0, bankrupt: false, boss: null, tiles: [], hideTips: false,
+    loans: [], redDays: 0, bankrupt: false, boss: null, tiles: [], hideTips: false,
     player: { x: 14, z: 7, carry: null },
     quest: 0,
     recentLost: [],
@@ -67,17 +67,30 @@ export function loadState() {
       }
       for (const type in FURNITURE) s.kit[type] ??= 0;
       s.boss ??= { ...DEFAULT_BOSS };
+      if (s.loan) s.loans.push(s.loan);
+      delete s.loan;
       syncFurniture(s);
+      // v3 had one shared stock; spread it over the shelves.
+      if (s.v < 4) {
+        const sh = shelvesOf(s), cap = shelfCap(s);
+        let k = 0;
+        for (const [pid, n] of Object.entries(s.stock)) for (let u = 0; u < n; u++) {
+          while (k < sh.length - 1 && shelfCount(sh[k]) >= cap) k++;
+          if (sh[k]) putOnShelf(pid, sh[k]);
+        }
+        s.v = 4;
+      }
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;
       for (const o of s.orders) {
         const held = o.by === 'player' && pc?.kind === 'items' && pc.orderIds.includes(o.id);
         if (o.status === 'picked' && !held && o.by !== 'floor') {
-          o.status = 'queued'; o.by = null; s.stock[o.productId] = (s.stock[o.productId] || 0) + 1;
+          o.status = 'queued'; o.by = null; returnItem(s, o);
         }
       }
       for (const d of s.drops) { d.claimedBy = null; d.orderIds = d.orderIds.filter((id) => s.orders.some((o) => o.id === id)); }
       s.drops = s.drops.filter((d) => d.orderIds.length);
+      syncStock(s);
       for (const b of s.boxes) {
         if (b.carriedBy !== 'player') b.carriedBy = null;
         b.claimedBy = null;
@@ -174,9 +187,36 @@ export function takeBox(s, box, who) {
 }
 
 // Moves one unit from a box onto the shelves. Returns false if the warehouse is full.
-export function stockOne(s, box) {
-  if (stockTotal(s) >= capacity(s)) return false;
-  s.stock[box.productId] = (s.stock[box.productId] || 0) + 1;
+// ---------- per-shelf stock ----------
+// Each shelf keeps its own items (f.stock) and can be reserved for one product (f.only); s.stock is the sum.
+export const shelfCap = (s) => upgVal(s, 'storage');
+const shelvesOf = (s) => s.furniture.filter((f) => f.type === 'shelf');
+export const shelfCount = (f) => Object.values(f.stock || {}).reduce((a, b) => a + b, 0);
+export const shelfAccepts = (s, f, pid) => (!f.only || f.only === pid) && shelfCount(f) < shelfCap(s);
+export const shelfHasOrder = (s, f) => s.orders.some((o) => o.status === 'queued' && (f.stock?.[o.productId] || 0) > 0);
+
+export function syncStock(s) {
+  const st = {};
+  for (const f of shelvesOf(s)) for (const [k, n] of Object.entries(f.stock || {})) if (n) st[k] = (st[k] || 0) + n;
+  s.stock = st;
+}
+
+function putOnShelf(pid, f) {
+  f.stock ??= {};
+  f.stock[pid] = (f.stock[pid] || 0) + 1;
+}
+
+// An item goes back where it came from, or else to any shelf with room.
+function returnItem(s, o) {
+  const sh = shelvesOf(s);
+  const f = sh.find((x) => x.id === o.from) ?? sh.find((x) => shelfAccepts(s, x, o.productId)) ?? sh[0];
+  if (f) putOnShelf(o.productId, f);
+}
+
+export function stockOne(s, box, f) {
+  if (!f || !shelfAccepts(s, f, box.productId)) return false;
+  putOnShelf(box.productId, f);
+  syncStock(s);
   s.everStocked[box.productId] = true;
   s.stats.unitsStocked++;
   box.qty--;
@@ -185,12 +225,15 @@ export function stockOne(s, box) {
   return true;
 }
 
-export function claimOrder(s, who) {
-  const o = s.orders.find((x) => x.status === 'queued');
+// Picks the first queued order whose product is on this shelf.
+export function claimOrder(s, who, f) {
+  const o = s.orders.find((x) => x.status === 'queued' && (f.stock?.[x.productId] || 0) > 0);
   if (!o) return null;
   o.status = 'picked';
   o.by = who;
-  s.stock[o.productId]--;
+  o.from = f.id;
+  f.stock[o.productId]--;
+  syncStock(s);
   s.stats.itemsPicked++;
   return o;
 }
@@ -207,8 +250,9 @@ export function releaseOrders(s, ids) {
   for (const o of s.orders) {
     if (!ids.includes(o.id) || o.status !== 'picked') continue;
     o.status = 'queued'; o.by = null;
-    s.stock[o.productId] = (s.stock[o.productId] || 0) + 1;
+    returnItem(s, o);
   }
+  syncStock(s);
 }
 
 export function shipOrder(s, id, pos) {

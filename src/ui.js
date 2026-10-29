@@ -7,7 +7,7 @@ import {
   spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, mood,
 } from './state.js';
 import {
-  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult,
+  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult, loanBlock,
 } from './sim.js';
 import { TILE } from './world.js';
 
@@ -65,6 +65,7 @@ export class UI {
     });
     bus.on('toast', (t, cls, ms) => this.toast(t, cls, ms));
     bus.on('bankrupt', () => this.bankrupt());
+    bus.on('shelfMenu', (f) => this.shelfMenu(f));
     if (s.bankrupt) this.bankrupt();
     bus.on('levelup', (l) => this.levelUp(l));
     bus.on('dayEnd', (r) => this.toast(dayReport(r), 'day', 5000));
@@ -104,11 +105,17 @@ export class UI {
     }
     if (cmd === 'ptab') this.prodTab = x;
     if (cmd === 'tips') s.hideTips = x === '0';
+    if (cmd === 'shelfOnly') {
+      const f = s.furniture.find((o) => o.id === +x);
+      if (f) { f.only = y === 'all' ? null : y; this.w.rebuild(); this.toast(f.only ? `🏷️ Reolen er nu til ${productById[y].icon} ${productById[y].name}` : '🏷️ Reolen tager alle varer', 'good'); }
+      $('#modal').classList.remove('show');
+      return;
+    }
     if (cmd === 'expand') { this.open('home'); bus.emit('expandStart'); return; }
     if (cmd === 'advisor' && x) this.open(x);
     if (cmd === 'closeModal') $('#modal').classList.remove('show');
-    if (cmd === 'loan') { if (takeLoan(s, x)) { this.toast(`🏦 ${kr(s.loan.amount)} er sat ind på kontoen`, 'good'); bus.emit('sfx', 'coin'); } }
-    if (cmd === 'repay') { if (!repayLoan(s)) this.toast('Ikke nok penge til at indfri lånet 💸', 'bad'); else this.toast('✅ Lånet er indfriet', 'good'); }
+    if (cmd === 'loan') { if (takeLoan(s, x)) { this.toast(`🏦 ${kr(s.loans.at(-1).amount)} er sat ind på kontoen`, 'good'); bus.emit('sfx', 'coin'); } }
+    if (cmd === 'repay') { if (!repayLoan(s, x)) this.toast('Ikke nok penge til at indfri lånet 💸', 'bad'); else this.toast('✅ Lånet er indfriet', 'good'); }
     if (cmd === 'restart') resetState();
     if (cmd === 'reset') { if (this.confirmReset) resetState(); else this.confirmReset = true; }
     this.renderSheet(true);
@@ -163,14 +170,47 @@ export class UI {
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, ms);
   }
 
+  // Choose which product a shelf is for.
+  shelfMenu(f) {
+    const s = this.s, opts = [['all', '📦', 'Alle varer'], ...PRODUCTS.filter((p) => p.lvl <= s.level).map((p) => [p.id, p.icon, p.name])];
+    const on = Object.entries(f.stock || {}).filter(([, n]) => n).map(([id, n]) => `${productById[id].icon} ${n}`).join(' · ');
+    $('#modal').innerHTML = `<div class="card-modal shelfmenu">
+      <h2>🏷️ Reolens varer</h2><p>Vælg hvad der skal stå på denne reol. Der står nu: ${on || 'ingenting'}</p>
+      <div class="opts">${opts.map(([id, ic, name]) => `<button class="chipbtn ${(f.only || 'all') === id ? 'on' : ''}" data-act="shelfOnly:${f.id}:${id}">${ic} ${name}</button>`).join('')}</div>
+      <button class="btn ghost" data-act="closeModal">Luk</button></div>`;
+    $('#modal').classList.add('show');
+  }
+
   bankrupt() {
     const s = this.s;
-    const days = s.day - 1;
+    const st = s.stats, days = s.day - 1 + (s.bankruptWhy === 'stuck' ? 1 : 0);
+    const exp = Object.values(st.exp).reduce((a, b) => a + b, 0), result = st.revenue - exp;
+    const best = st.history.reduce((a, d) => (!a || d.revenue - d.costs > a.revenue - a.costs ? d : a), null);
+    const top = Object.entries(s.sold || {}).sort((a, b) => b[1] - a[1])[0];
+    const why = s.bankruptWhy === 'stuck'
+      ? 'Kassen er tom, lageret er tomt, og banken vil ikke låne dig flere penge.'
+      : `Webshoppen havde underskud ${BANKRUPT_DAYS} dage i træk, og banken har lukket butikken.`;
+    const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
     $('#toasts').innerHTML = '';
-    $('#modal').innerHTML = `<div class="card-modal">
-      <div class="burst">💸</div><h2>Konkurs!</h2>
-      <p>Webshoppen havde underskud ${BANKRUPT_DAYS} dage i træk, og banken har lukket butikken.</p>
-      <h4>Din rejse</h4><ul><li>${days} ${days === 1 ? 'dag' : 'dage'} i drift</li><li>Level ${s.level}</li><li>${fmt(s.stats.shipped)} pakker sendt</li><li>${kr(s.stats.revenue)} i omsætning</li></ul>
+    $('#modal').innerHTML = `<div class="card-modal summary">
+      <div class="burst">💸</div><h2>KONKURS</h2>
+      <p>${why}</p>
+      <h4>${esc(s.boss?.name || '')}s webshop</h4>
+      <table class="ledger plain">
+        ${row('📅 Dage i drift', fmt(days))}
+        ${row('⭐ Level', s.level)}
+        ${row('📦 Pakker sendt', fmt(st.shipped))}
+        ${row('🛍️ Omsætning', kr(st.revenue))}
+        ${row('💸 Udgifter i alt', kr(exp))}
+        ${row('📊 Samlet resultat', `<b class="${result < 0 ? 'warn' : 'pos'}">${result >= 0 ? '+' : ''}${kr(result)}</b>`)}
+        ${best ? row('🏆 Bedste dag', `Dag ${best.day} · ${kr(best.revenue)}`) : ''}
+        ${top ? row('👑 Mest solgte vare', `${productById[top[0]].icon} ${productById[top[0]].name} (${fmt(top[1])})`) : ''}
+        ${row('😞 Tabte ordrer', fmt(st.lost))}
+        ${row('👥 Ansatte', s.employees.length)}
+        ${row('📣 Kampagner', fmt(st.campaigns))}
+        ${row('🎧 Kundehenvendelser løst', fmt(st.ticketsSolved))}
+        ${row('📐 Lager', `${fmt((90 + s.tiles.length) * 4)} m²`)}
+      </table>
       <button class="btn big" data-act="restart">Start en ny webshop</button></div>`;
     $('#modal').classList.add('show');
   }
@@ -410,30 +450,35 @@ export class UI {
 
   // How close the shop is to bankruptcy.
   r_risk() {
-    const s = this.s, today = dayResult(s.stats.today), n = s.redDays;
+    const s = this.s, n = s.redDays;
+    // Forecast: what the day will count as once wages, rent and interest are paid tonight.
+    const today = dayResult(s.stats.today) - s.employees.reduce((a, e) => a + salaryOf(e), 0) - rentOf(s) - s.loans.reduce((a, l) => a + loanRate(l).interest, 0);
     const dots = Array.from({ length: BANKRUPT_DAYS }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
     return `<div class="risk ${n >= 4 ? 'hot' : ''}">
       <div><b>${n ? `⚠️ Underskud ${n} ${n === 1 ? 'dag' : 'dage'} i træk` : '✅ Ingen underskudsdage'}</b><div class="rdots">${dots}</div></div>
       <small>Har du underskud (eller negativ saldo) ${BANKRUPT_DAYS} dage i træk, går du konkurs. Køb af møbler og upgrades tæller ikke som underskud.
-      I dag indtil videre: ${today >= 0 ? '+' : ''}${kr(today)}</small></div>`;
+      Forventet i dag (efter løn, husleje og renter): ${today >= 0 ? '+' : ''}${kr(today)}</small></div>`;
   }
 
   r_loans() {
-    const s = this.s, l = s.loan;
-    if (l) {
-      const r = loanRate(l);
-      return `<h3>🏦 Lån</h3><div class="card"><div class="av">${l.icon}</div>
-        <div class="info"><b>${l.name} · ${kr(l.amount)}</b><small>Restgæld ${kr(l.principal + l.interest)} · ${l.left} ${l.left === 1 ? 'dag' : 'dage'} tilbage</small>
-          <small class="eff">Afdrag ${kr(r.principal + r.interest)}/dag (heraf renter ${kr(r.interest)})</small></div>
-        <div class="btns"><button class="btn ghost" data-act="repay" ${s.money < loanPayoff(l) ? 'disabled' : ''}>Indfri<small>${kr(loanPayoff(l))}</small></button></div></div>`;
-    }
-    return `<h3>🏦 Lån</h3><p class="tip">Lån penge til at vokse hurtigere. Lånet betales tilbage med renter hver aften. Du kan have ét lån ad gangen.</p>` +
+    const s = this.s;
+    return `<h3>🏦 Lån</h3><p class="tip">Lån penge til at vokse hurtigere. Lånene betales tilbage med renter hver aften. Du kan have flere lån, men kun ét af hver slags – og banken kigger på dine underskudsdage den seneste uge.</p>` +
       LOANS.map((L) => {
-        const interest = Math.round(L.amount * L.rate), per = Math.round((L.amount + interest) / L.days);
+        const l = s.loans.find((x) => x.id === L.id);
+        if (l) {
+          const r = loanRate(l);
+          return `<div class="card"><div class="av">${l.icon}</div>
+            <div class="info"><b>${l.name} · ${kr(l.amount)} <span class="tag gold">AKTIVT</span></b><small>Restgæld ${kr(l.principal + l.interest)} · ${l.left} ${l.left === 1 ? 'dag' : 'dage'} tilbage</small>
+              <small class="eff">Afdrag ${kr(r.principal + r.interest)}/dag (heraf renter ${kr(r.interest)})</small></div>
+            <div class="btns"><button class="btn ghost" data-act="repay:${l.id}" ${s.money < loanPayoff(l) ? 'disabled' : ''}>Indfri<small>${kr(loanPayoff(l))}</small></button></div></div>`;
+        }
+        const interest = Math.round(L.amount * L.rate), per = Math.round((L.amount + interest) / L.days), why = loanBlock(s, L);
+        const locked = why?.startsWith('🔒'), bad = why && !locked;
+        const req = L.maxBad ? `højst ${L.maxBad} underskudsdag${L.maxBad === 1 ? '' : 'e'} den seneste uge` : 'ingen underskudsdage den seneste uge';
         return `<div class="card"><div class="av">${L.icon}</div>
-          <div class="info"><b>${L.name} · ${kr(L.amount)}</b><small>${Math.round(L.rate * 100)} % rente (${kr(interest)}) · ${L.days} dage</small>
-            <small class="eff">Afdrag ca. ${kr(per)}/dag</small></div>
-          <div class="btns">${s.level < L.lvl ? `<span class="tag">🔒 Lvl ${L.lvl}</span>` : `<button class="btn" data-act="loan:${L.id}">Lån</button>`}</div></div>`;
+          <div class="info"><b>${L.name} · ${kr(L.amount)}</b><small>${Math.round(L.rate * 100)} % rente (${kr(interest)}) · ${L.days} dage · ca. ${kr(per)}/dag</small>
+            <small class="${bad ? 'warn' : 'eff'}">Krav: ${req}${bad ? ` – du har ${why.match(/\d+/)[0]}` : ''}</small></div>
+          <div class="btns">${locked ? `<span class="tag">${why}</span>` : `<button class="btn" data-act="loan:${L.id}" ${why ? 'disabled' : ''}>Lån</button>`}</div></div>`;
       }).join('');
   }
 
@@ -442,6 +487,9 @@ export class UI {
     const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
     const res = (n) => `<b class="${n < 0 ? 'warn' : 'pos'}">${n >= 0 ? '+' : ''}${kr(n)}</b>`;
     const totalExp = Object.values(st.exp).reduce((a, b) => a + b, 0);
+    // Bills that are paid when the day ends: wages, rent and the loan installment.
+    const tonight = [['👥 Løn', wages], ['🏠 Husleje', rentOf(s)], ...s.loans.map((l) => { const r = loanRate(l); return [`${l.icon} ${l.name} (afdrag ${kr(r.principal)} + renter ${kr(r.interest)})`, r.principal + r.interest]; })].filter(([, n]) => n);
+    const pending = tonight.reduce((a, [, n]) => a + n, 0), dayCost = td.costs + pending;
     const lines = Object.entries(EXPENSES).filter(([k]) => td.exp[k] || st.exp[k])
       .map(([k, name]) => `<tr><td>${name}</td><td>${kr(td.exp[k] || 0)}</td><td>${kr(st.exp[k] || 0)}</td></tr>`).join('');
     const max = Math.max(1, ...h.map((d) => Math.max(d.revenue, d.costs)));
@@ -451,15 +499,16 @@ export class UI {
       : '<p class="empty">Historik vises efter første dag.</p>';
     return `<div class="grid3">
         <div class="stat"><small>Indtægter i dag</small><b class="pos">${kr(td.revenue)}</b></div>
-        <div class="stat"><small>Udgifter i dag</small><b>${kr(td.costs)}</b></div>
-        <div class="stat"><small>Resultat i dag</small>${res(td.revenue - td.costs)}</div>
+        <div class="stat"><small>Udgifter i dag</small><b>${kr(dayCost)}</b><small>heraf ${kr(pending)} i aften</small></div>
+        <div class="stat"><small>Resultat i dag</small>${res(td.revenue - dayCost)}</div>
       </div>
       <h3>Regnskab</h3>
       <table class="ledger">
         <tr><th></th><th>I dag</th><th>I alt</th></tr>
         <tr class="inc"><td>🛍️ Salg (${td.orders} / ${fmt(st.shipped)} ordrer)</td><td>${kr(td.revenue)}</td><td>${kr(st.revenue)}</td></tr>
         ${lines}
-        <tr class="sum"><td>Resultat</td><td>${res(td.revenue - td.costs)}</td><td>${res(st.revenue - totalExp)}</td></tr>
+        ${tonight.length ? `<tr class="sub"><td colspan="3">⏳ Trækkes når dagen slutter</td></tr>${tonight.map(([n, v]) => `<tr><td>${n}</td><td>${kr(v)}</td><td></td></tr>`).join('')}` : ''}
+        <tr class="sum"><td>Resultat</td><td>${res(td.revenue - dayCost)}</td><td>${res(st.revenue - totalExp)}</td></tr>
       </table>
       ${this.r_risk()}
       ${this.r_loans()}
@@ -468,7 +517,7 @@ export class UI {
         <small>🏠 Husleje: <b>${kr(rentOf(s))}/dag</b> – stiger når du bygger reoler, pakkeborde og skriveborde</small>
         <small>👥 Løn: <b>${kr(wages)}/dag</b> (${s.employees.length} ansatte)</small>
         <small>🎁 Emballage: <b>${kr(PACKAGING)}</b> og 🚚 fragt: <b>${kr(FREIGHT)}</b> pr. pakke</small>
-        ${s.loan ? `<small>🏦 Afdrag på lån: <b>${kr(loanRate(s.loan).principal + loanRate(s.loan).interest)}/dag</b> (heraf renter ${kr(loanRate(s.loan).interest)})</small>` : ''}
+        ${s.loans.map((l) => { const r = loanRate(l); return `<small>${l.icon} ${l.name}: <b>${kr(r.principal + r.interest)}/dag</b> (heraf renter ${kr(r.interest)})</small>`; }).join('')}
         <small>Husleje, løn og afdrag trækkes når dagen slutter.</small>
       </div>
       <h3>Resultat pr. dag</h3>${bars}
@@ -481,6 +530,8 @@ export class UI {
       <button class="btn ghost wide" data-act="reset">${this.confirmReset ? 'Tryk igen for at slette alt' : 'Start forfra'}</button>`;
   }
 }
+
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 function rewardText(r) {
   return [r.money && `💰 ${fmt(r.money)}`, r.gems && `❤️ ${r.gems}`, r.xp && `⭐ ${r.xp} XP`].filter(Boolean).join(' ');

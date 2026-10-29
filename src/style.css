@@ -236,7 +236,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 .bar span { font-size: 10px; font-weight: 600; }
 
 /* ---------- toasts + modal ---------- */
-#toasts { position: absolute; left: calc(var(--side) + 10px); right: calc(var(--side) + 10px); bottom: calc(var(--nav-h) + 14px); display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 6; }
+#toasts { position: absolute; left: calc(var(--side) + 10px); right: calc(var(--side) + 10px); bottom: calc(var(--nav-h) + 70px); display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 6; }
 .toast {
   background: rgba(45, 42, 74, 0.92); color: #fff; border-radius: 14px; padding: 8px 12px; font-size: 13px; font-weight: 500;
   box-shadow: var(--shadow); animation: tin 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.3);
@@ -271,7 +271,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 .ledger th { font-size: 10.5px; color: var(--muted); font-weight: 600; text-align: right; padding: 6px 10px 2px; }
 .ledger td { padding: 5px 10px; border-top: 1px solid #f1edf7; }
 .ledger td + td { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.ledger tr:not(.inc):not(.sum) td + td::before { content: '−'; }
+.ledger:not(.plain) tr:not(.inc):not(.sum) td + td:not(:empty)::before { content: '−'; }
 .ledger tr.inc td { color: var(--green); font-weight: 600; }
 .ledger tr.sum td { font-weight: 700; background: #faf8fd; }
 .bar .pair { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 2px; }
@@ -295,8 +295,12 @@ body.building #toasts { bottom: calc(env(safe-area-inset-bottom) + 130px); }
 }
 #buildbar[hidden], #buildfab[hidden], .fab[hidden] { display: none; }
 #dropbtn { position: absolute; right: calc(var(--side) + 12px); bottom: calc(var(--nav-h) + 14px); z-index: 7; }
-#pickbtn { position: absolute; left: calc(var(--side) + 12px); bottom: calc(var(--nav-h) + 14px); z-index: 7; background: var(--pink); color: #fff; }
-body.building #dropbtn, body.building #pickbtn { display: none; }
+#lbtns { position: absolute; left: calc(var(--side) + 12px); bottom: calc(var(--nav-h) + 14px); z-index: 7; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; pointer-events: none; }
+#lbtns .fab { pointer-events: auto; }
+#pickbtn { background: var(--pink); color: #fff; }
+body.building #dropbtn, body.building #lbtns { display: none; }
+.ledger tr.sub td { color: var(--muted); font-size: 11.5px; font-weight: 700; padding-top: 8px; }
+.shelfmenu .opts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 10px 0 14px; }
 .bmsg { font-size: 13px; color: var(--muted); margin: 0 2px 9px; }
 .bmsg b { color: var(--ink); }
 .bmsg .bad { color: var(--red); font-weight: 700; }
@@ -341,3 +345,7 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #d9d4e3; font-size: 11px; color: var(--muted); background: #fff; }
 .sw.on { box-shadow: 0 0 0 3px var(--pink); }
 .btn.wide { width: 100%; }
+
+.card-modal.summary { max-width: 360px; max-height: 92%; overflow-y: auto; }
+.card-modal.summary h2 { color: #ef476f; letter-spacing: 1px; }
+.card-modal.summary .ledger { margin: 6px 0 14px; text-align: left; }
