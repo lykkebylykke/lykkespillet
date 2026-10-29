@@ -416,7 +416,12 @@ class Worker {
         } else {
           // Go to the nearest shelf that holds something an order needs.
           const sh = w.nearestShelf(this.pos.x, this.pos.z, (x) => shelfHasOrder(s, x.f));
-          if (!sh) { this.status = '😴'; yield* this.idle(this.restSpot()); continue; }
+          if (!sh) {
+            // Nothing to pack: put the morning's returns back on the shelves instead.
+            const ret = s.boxes.find((b) => b.ret && !b.carriedBy && !b.claimedBy && w.shelves.some((x) => shelfAccepts(s, x.f, b.productId)));
+            if (ret) { this.status = '↩️'; if (yield* this.fetchBox(ret)) while (yield* this.shelveBox()); continue; }
+            this.status = '😴'; yield* this.idle(this.restSpot()); continue;
+          }
           this.status = '';
           yield* this.walkTo(sh.ax, sh.az);
           yield* this.face(sh.fx, sh.fz);
@@ -463,30 +468,49 @@ class Worker {
           continue;
         }
         this.status = '';
-        box.claimedBy = this.d.id;
-        if (box.at) yield* this.walkTo(box.at.x, box.at.z);
-        else yield* this.walkTo(THREE.MathUtils.clamp(BOX_SLOTS[box.slot].x, 11.5, 16), DELIVERY_SPOT.z - 0.4);
-        if (!s.boxes.includes(box) || box.carriedBy) { this.box = null; continue; }
-        if (!box.at) yield* this.face(0, -1);
-        yield* this.wait(0.4);
-        takeBox(s, box, this.d.id);
-        this.box = box;
+        yield* this.fetchBox(box);
+        continue;
       }
-      // Fill the nearest shelf that takes this product; move on when it's full.
-      const pid = this.box.productId;
-      const sh = w.nearestShelf(this.pos.x, this.pos.z, (x) => shelfAccepts(s, x.f, pid));
-      if (!sh) { this.status = '⚠️ Ingen plads på reolerne'; this.working = false; yield* this.wait(0.8); continue; }
-      this.status = '';
-      yield* this.walkTo(sh.ax, sh.az);
-      yield* this.face(sh.fx, sh.fz);
-      while (this.box.qty > 0 && shelfAccepts(s, sh.f, pid)) {
-        this.working = true;
-        yield* this.wait(0.25 / this.mult);
-        stockOne(s, this.box, sh.f);
-      }
-      this.working = false;
-      if (this.box.qty <= 0) this.box = null;
+      if (!(yield* this.shelveBox())) { this.status = '⚠️ Ingen plads på reolerne'; yield* this.wait(0.8); }
     }
+  }
+
+  // Walk to a box on the dock (or the floor) and pick it up. Shared by stockers and packers doing returns.
+  *fetchBox(box) {
+    const s = this.s;
+    box.claimedBy = this.d.id;
+    if (box.at) yield* this.walkTo(box.at.x, box.at.z);
+    else yield* this.walkTo(THREE.MathUtils.clamp(BOX_SLOTS[box.slot].x, 11.5, 16), DELIVERY_SPOT.z - 0.4);
+    if (!s.boxes.includes(box) || box.carriedBy) { this.box = null; return false; }
+    if (!box.at) yield* this.face(0, -1);
+    yield* this.wait(0.4);
+    takeBox(s, box, this.d.id);
+    this.box = box;
+    return true;
+  }
+
+  // Fill the nearest shelf that takes the carried box. True while there's more to put away.
+  *shelveBox() {
+    const s = this.s, w = this.w, pid = this.box.productId;
+    const sh = w.nearestShelf(this.pos.x, this.pos.z, (x) => shelfAccepts(s, x.f, pid));
+    this.working = false;
+    if (!sh) {
+      if (this.d.role === 'stocker') return false; // stockers wait for room
+      // A packer has orders to get back to: leave the box on the floor for later.
+      this.box.carriedBy = null; this.box.at = { x: this.pos.x, z: this.pos.z }; this.box.slot = null; this.box = null;
+      return false;
+    }
+    this.status = this.d.role === 'packer' ? '↩️' : '';
+    yield* this.walkTo(sh.ax, sh.az);
+    yield* this.face(sh.fx, sh.fz);
+    while (this.box.qty > 0 && shelfAccepts(s, sh.f, pid)) {
+      this.working = true;
+      yield* this.wait(0.25 / this.mult);
+      stockOne(s, this.box, sh.f);
+    }
+    this.working = false;
+    if (this.box.qty <= 0) { this.box = null; this.status = ''; return false; }
+    return true;
   }
 
   *deskLoop() {

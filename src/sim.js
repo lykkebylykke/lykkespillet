@@ -1,5 +1,5 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner, PRODUCTS, TREND,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner, PRODUCTS, TREND, RETURN_FREIGHT,
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
@@ -50,13 +50,32 @@ export function buyFurniture(s, type) {
   return true;
 }
 
-export function buyStock(s, productId, boxes) {
+export function buyStock(s, productId, boxes, qty) {
   const p = productById[productId];
-  if (!spend(s, p.cost * p.box * boxes, 'goods')) return false;
+  qty ??= p.box; // a whole box, or a quick reorder of a few pieces in one box
+  if (!spend(s, p.cost * qty * boxes, 'goods')) return false;
   const delay = s.time < s.delayUntil ? 20 : 6;
-  for (let i = 0; i < boxes; i++) s.deliveries.push({ productId, qty: p.box, eta: s.time + delay + i * 0.4 });
+  for (let i = 0; i < boxes; i++) s.deliveries.push({ productId, qty, eta: s.time + delay + i * 0.4 });
   s.stats.boxesBought += boxes;
   return true;
+}
+
+// Each morning the truck brings back yesterday's returns, one box per product. Customers get their money back now.
+function bringReturns(s) {
+  if (!s.returnsDue.length) return;
+  const by = {};
+  for (const r of s.returnsDue) { (by[r.pid] ??= { qty: 0, refund: 0 }).qty++; by[r.pid].refund += r.rev; }
+  let n = 0, cost = 0, i = 0;
+  for (const [pid, r] of Object.entries(by)) {
+    s.deliveries.push({ productId: pid, qty: r.qty, eta: s.time + 4 + i++ * 0.4, ret: true });
+    charge(s, r.refund + RETURN_FREIGHT * r.qty, 'returns');
+    s.returned[pid] = (s.returned[pid] || 0) + r.qty;
+    n += r.qty; cost += r.refund + RETURN_FREIGHT * r.qty;
+  }
+  s.stats.returns += n;
+  s.stats.today.returns = n;
+  s.returnsDue = [];
+  bus.emit('toast', `↩️ Morgenbilen kommer med ${n} ${n === 1 ? 'returvare' : 'returvarer'} – kunderne har fået ${kr(cost)} tilbage. Læg dem på reolen igen.`, 'warn', 6000);
 }
 
 function lose(s, p, why) {
@@ -205,6 +224,7 @@ function endDay(s) {
   s.dayTime = 0;
   refreshCandidates(s);
   rollTrends(s);
+  bringReturns(s);
   if (s.bankrupt) bus.emit('bankrupt');
 }
 
@@ -267,7 +287,7 @@ export function update(s, dt) {
     if (d.eta > s.time) continue;
     const slot = freeBoxSlot(s);
     if (slot < 0) break;
-    s.boxes.push({ id: s.nextId++, productId: d.productId, qty: d.qty, slot });
+    s.boxes.push({ id: s.nextId++, productId: d.productId, qty: d.qty, slot, ret: d.ret });
     d.done = true;
     arrived = true;
   }

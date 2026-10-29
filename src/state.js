@@ -36,7 +36,8 @@ export function newState() {
     deliveries: [],
     // Placed furniture; `kit` holds bought pieces still waiting to be placed (the starter kit at first).
     furniture: [], kit: { shelf: 1, table: 1, desk: 1 }, drops: [], shelves: 0, tables: 0, desks: 0,
-    upg: { packTable: 0, computer: 0, storage: 0, webshop: 0, shoes: 0, trolley: 0 },
+    upg: { packTable: 0, computer: 0, storage: 0, webshop: 0, shoes: 0, trolley: 0, returns: 0 },
+    returnsDue: [], returned: {}, waitAvg: 40,
     employees: [], candidates: [],
     boosts: [], trend: null, flop: null,
     auto: { on: false, prio: ['pack', 'pick', 'stock', 'tickets', 'web'], off: [] }, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
@@ -47,7 +48,7 @@ export function newState() {
     recentLost: [],
     stats: {
       shipped: 0, revenue: 0, lost: 0, boxesPicked: 0, unitsStocked: 0, itemsPicked: 0,
-      webshopWork: 0, boxesBought: 0, campaigns: 0, ticketsSolved: 0, history: [],
+      webshopWork: 0, boxesBought: 0, returns: 0, campaigns: 0, ticketsSolved: 0, history: [],
       exp: {}, today: newDay(),
     },
   };
@@ -71,6 +72,8 @@ export function loadState() {
         s.v = 3;
       }
       for (const type in FURNITURE) s.kit[type] ??= 0;
+      for (const k in UPGRADES) s.upg[k] ??= 0;
+      s.stats.returns ??= 0;
       s.boss ??= { ...DEFAULT_BOSS };
       // v5: a bad day means a negative balance, not a day that cost more than it earned.
       const v5 = s.v < 5 && s.money >= 0;
@@ -264,6 +267,21 @@ export function releaseOrders(s, ids) {
   syncStock(s);
 }
 
+// ---------- returns ----------
+// What changes how often parcels come back: [label, multiplier, tip when it could be better].
+export function returnFactors(s, wait = s.waitAvg) {
+  const f = [], U = UPGRADES.returns, lvl = s.upg.returns, next = U.levels[lvl + 1];
+  f.push([`📏 ${U.levels[lvl].name}`, U.levels[lvl].val, next && `📏 Opgrader produktsiderne til "${next.name}" under ⬆️ Upgrades`]);
+  const support = s.employees.some((e) => e.role === 'support' && e.desk != null);
+  f.push([support ? '🎧 Kundeservice hjælper med størrelser' : '🎧 Ingen kundeservice', support ? 0.85 : 1, !support && '🎧 Ansæt kundeservice – de hjælper kunderne med at vælge rigtigt']);
+  const sat = 1.3 - (s.satisfaction / 100) * 0.6;
+  f.push([`😊 Kundetilfredshed ${Math.round(s.satisfaction)} %`, sat, s.satisfaction < 75 && '😊 Gladere kunder sender færre varer retur']);
+  const speed = wait < 45 ? 0.9 : wait < 90 ? 1 : 1.4;
+  f.push([wait < 45 ? '⚡ Hurtig levering' : wait < 90 ? '🚚 Normal levering' : '🐌 Langsom levering', speed, wait >= 45 && '⚡ Pak ordrerne hurtigere – sene pakker sendes oftere retur']);
+  return f;
+}
+export const returnRate = (s, p, wait) => Math.min(0.6, returnFactors(s, wait).reduce((a, [, m]) => a * m, p.ret));
+
 export function shipOrder(s, id, pos) {
   const o = s.orders.find((x) => x.id === id);
   if (!o) return;
@@ -280,6 +298,9 @@ export function shipOrder(s, id, pos) {
   s.sold[p.id] = (s.sold[p.id] || 0) + 1;
   const wait = s.time - o.t;
   s.satisfaction = Math.max(0, Math.min(100, s.satisfaction + (wait < 45 ? 0.6 : wait < 90 ? 0.1 : -1.5)));
+  s.waitAvg = s.waitAvg * 0.9 + wait * 0.1;
+  // Some parcels come back; they arrive with tomorrow morning's truck.
+  if (Math.random() < returnRate(s, p, wait)) s.returnsDue.push({ pid: p.id, rev });
   s.parcels++;
   if (Math.random() < 0.1) s.tickets++; // some customers write in
   addXP(s, 10 + Math.round(p.price / 40));

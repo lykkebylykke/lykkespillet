@@ -1,10 +1,10 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS, RETURN_FREIGHT,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture,
+  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, returnRate, returnFactors, listed,
 } from './state.js';
 import {
   effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, loanBlock, happiness, happyEff,
@@ -82,6 +82,7 @@ export class UI {
     bus.emit('sfx', 'click');
     if (cmd === 'tab') { this.open(x); return; }
     if (cmd === 'buy') { if (!buyStock(s, x, +y)) this.toast('Ikke nok penge 💸', 'bad'); }
+    if (cmd === 'buyQty') { if (!buyStock(s, x, 1, +y)) this.toast('Ikke nok penge 💸', 'bad'); else this.toast(`🚚 ${y} × ${productById[x].icon} ${productById[x].name} er bestilt`, 'good'); }
     if (cmd === 'price') s.priceMode[x] = y;
     if (cmd === 'hire') { if (!hire(s, +x)) this.toast('Ikke nok penge 💸', 'bad'); }
     if (cmd === 'upEmp') {
@@ -294,6 +295,22 @@ export class UI {
     this.renderSheet();
   }
 
+  // How often parcels come back, what drives it and what would help.
+  returnsCard() {
+    const s = this.s, L = listed(s);
+    if (!L.length) return '';
+    const w = L.map((p) => s.sold[p.id] || 1), sum = w.reduce((a, b) => a + b, 0);
+    const avg = L.reduce((a, p, i) => a + returnRate(s, p) * w[i], 0) / sum;
+    const f = returnFactors(s), tips = f.map(([, , tip]) => tip).filter(Boolean);
+    const real = s.stats.shipped ? `${s.stats.returns} af ${fmt(s.stats.shipped)} pakker er kommet retur (${Math.round((s.stats.returns / s.stats.shipped) * 100)} %).` : '';
+    return `<div class="card retcard"><div class="av" style="background:#ffe3e8">↩️</div><div class="info">
+      <b>Returrate ca. <span class="${avg >= 0.15 ? 'warn' : 'pos'}">${Math.round(avg * 100)} %</span></b>
+      <small>Returvarer kommer med morgenbilen. Kunden får pengene tilbage + ${kr(RETURN_FREIGHT)} i returfragt pr. vare, og varen skal på reolen igen – lagerfolk og ledige pakkere tager dem. ${real}</small>
+      <small class="hwhy">${f.filter(([, m]) => Math.abs(m - 1) > 0.005).map(([n, m]) => `${n} ${m < 1 ? '−' : '+'}${Math.abs(Math.round((m - 1) * 100))} %`).join(' · ')}</small>
+      ${tips.length ? `<div class="htips">${tips.map((t) => `<small>💡 ${t}</small>`).join('')}</div>` : ''}
+      <small>Tøj der skal passe (jeans, kjoler, sko) kommer oftest retur – tilbehør næsten aldrig.</small></div></div>`;
+  }
+
   trendChips() {
     const s = this.s, days = (d) => (d === 1 ? 'i dag' : `${d} dage`);
     return (s.trend ? `<div class="boost trend" data-act="tab:buy"><span>🔥</span>${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender · ${days(s.trend.days)}</div>` : '')
@@ -417,7 +434,7 @@ export class UI {
     const transit = (id) => s.deliveries.filter((d) => d.productId === id).reduce((a, d) => a + d.qty, 0) + s.boxes.filter((b) => b.productId === id).reduce((a, b) => a + b.qty, 0);
     const mine = PRODUCTS.filter((p) => s.everStocked[p.id] || transit(p.id));
     if (!mine.length) return '<p class="empty">Du har ingen varer i shoppen endnu. Køb dem hjem under 🛒 Indkøb.</p>';
-    return `<p class="tip">Lager: <b>${stockTotal(s)}/${capacity(s)}</b> · Varer der er bestilt men ikke plukket, står stadig på reolen.</p>` + mine.map((p) => {
+    return `<p class="tip">Lager: <b>${stockTotal(s)}/${capacity(s)}</b> · Varer der er bestilt men ikke plukket, står stadig på reolen.</p>${this.returnsCard()}` + mine.map((p) => {
       const price = unitPrice(s, p), mode = s.priceMode[p.id] || 'normal';
       const stock = s.stock[p.id] || 0, tr = transit(p.id), free = Math.max(0, available(s, p.id));
       return `<div class="card prod">
@@ -425,7 +442,8 @@ export class UI {
         <div class="info">
           <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${this.trendTag(p.id)}${stock ? '' : ' <span class="tag hot">Udsolgt</span>'}</b>
           <small>På reolen: <b class="${free ? '' : 'warn'}">${stock}</b>${stock !== free ? ` (${stock - free} bestilt)` : ''}${tr ? ` · På vej: ${tr}` : ''} · Solgt: ${s.sold[p.id] || 0}</small>
-          <small>Salgspris ${kr(price)} · Margin <b>${kr(price - p.cost)}</b></small>
+          <small>Salgspris ${kr(price)} · Margin <b>${kr(price - p.cost)}</b> · ↩️ Retur ca. <b class="${returnRate(s, p) >= 0.2 ? 'warn' : ''}">${Math.round(returnRate(s, p) * 100)} %</b>${s.returned[p.id] ? ` (${s.returned[p.id]} sendt retur)` : ''}</small>
+          <button class="btn quick" data-act="buyQty:${p.id}:10" ${s.money < p.cost * 10 ? 'disabled' : ''}>🛒 Køb 10 stk · ${kr(p.cost * 10)}</button>
           <div class="seg">${Object.entries(PRICE_MODES).map(([k, m]) => `<button class="${k === mode ? 'on' : ''}" data-act="price:${p.id}:${k}">${m.name} pris</button>`).join('')}</div>
         </div></div>`;
     }).join('');

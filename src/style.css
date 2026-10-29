@@ -431,3 +431,7 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
   #app:has(#sheet.open) #lbtns, #app:has(#sheet.open) #dropbtn { display: none; }
 }
 .bars small.warn { color: var(--red); }
+
+/* ---------- returns & quick reorder ---------- */
+.btn.quick { margin-top: 6px; padding: 7px 10px; font-size: 13px; align-self: flex-start; }
+.retcard .pos { color: var(--green); }

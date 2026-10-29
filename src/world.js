@@ -703,7 +703,7 @@ export class World {
       live.add(b.id);
       let m = this.boxMeshes.get(b.id);
       if (!m) {
-        m = makeBox(productById[b.productId].color);
+        m = makeBox(productById[b.productId].color, b.ret);
         this.scene.add(m);
         this.boxMeshes.set(b.id, m);
         m.scale.setScalar(0.01);
@@ -756,7 +756,8 @@ export class World {
     }
 
     const waiting = s.boxes.filter((b) => !b.carriedBy && !b.at).length;
-    this.lblDelivery.set(waiting ? `📦 ${waiting}` : s.deliveries.length ? `🚚 ${s.deliveries.length} på vej` : '');
+    const rets = s.boxes.filter((b) => !b.carriedBy && !b.at && b.ret).length;
+    this.lblDelivery.set(waiting ? [waiting > rets && `📦 ${waiting - rets}`, rets && `↩️ ${rets}`].filter(Boolean).join(' ') : s.deliveries.length ? `🚚 ${s.deliveries.length} på vej` : '');
     // What's waiting to be packed, per product: grey = still on the shelf, green ✓ = already fetched.
     const q = queuedCount(s), open = {};
     for (const o of s.orders) (open[o.productId] ??= { q: 0, p: 0 })[o.status === 'picked' ? 'p' : 'q']++;
@@ -780,9 +781,11 @@ export class World {
   render() { this.renderer.render(this.scene, this.camera); }
 }
 
-export function makeBox(color) {
+// Return boxes are grey with a red return sticker on the side.
+export function makeBox(color, ret = false) {
   const g = new THREE.Group();
-  g.add(at(rbox(0.62, 0.46, 0.62, '#d9a066', 0.05), 0, 0.23, 0));
+  g.add(at(rbox(0.62, 0.46, 0.62, ret ? '#b9b2aa' : '#d9a066', 0.05), 0, 0.23, 0));
+  if (ret) g.add(at(rbox(0.3, 0.16, 0.02, '#ef476f', 0.01), 0, 0.26, 0.315));
   g.add(at(rbox(0.64, 0.02, 0.12, '#c08552', 0.01), 0, 0.465, 0));
   g.add(at(rbox(0.22, 0.02, 0.22, color, 0.01), 0.16, 0.47, 0.16));
   return g;
