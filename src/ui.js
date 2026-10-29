@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
@@ -9,6 +9,7 @@ import {
 import {
   effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult,
 } from './sim.js';
+import { TILE } from './world.js';
 
 const TABS = [
   ['home', '🏠', 'Hjem'], ['staff', '👥', 'Ansatte'], ['orders', '🧾', 'Ordrer'], ['products', '👕', 'Produkter'],
@@ -41,7 +42,7 @@ export class UI {
           <div class="chip"><span class="ci">👥</span><div class="ct"><b id="h-staff"></b><small>Ansatte</small></div></div>
         </div>
         <div class="panel">
-          <div class="dayrow"><b id="h-day"></b><div class="daybar"><i id="h-daybar"></i></div><small id="h-daytxt"></small></div>
+          <div class="dayrow"><b id="h-day"></b><div class="daybar"><i id="h-daybar"></i></div><small id="h-daytxt"></small><button id="tipsbtn" data-act="tips:1" title="Vis tips">💡</button></div>
           <button id="quest" class="quest"></button>
           <button id="advisor" class="advisor"></button>
         </div>
@@ -102,6 +103,8 @@ export class UI {
       this.toast('Ikke nok penge 💸', 'bad');
     }
     if (cmd === 'ptab') this.prodTab = x;
+    if (cmd === 'tips') s.hideTips = x === '0';
+    if (cmd === 'expand') { this.open('home'); bus.emit('expandStart'); return; }
     if (cmd === 'advisor' && x) this.open(x);
     if (cmd === 'closeModal') $('#modal').classList.remove('show');
     if (cmd === 'loan') { if (takeLoan(s, x)) { this.toast(`🏦 ${kr(s.loan.amount)} er sat ind på kontoen`, 'good'); bus.emit('sfx', 'coin'); } }
@@ -216,8 +219,11 @@ export class UI {
 
     const adv = advisor(s);
     const advEl = $('#advisor');
-    advEl.innerHTML = `<span class="qi">💡</span><span class="qt">${adv.text}</span>${adv.tab ? '<span class="chev">›</span>' : ''}`;
+    const ah = `<span class="qi">💡</span><span class="qt">${adv.text}</span>${adv.tab ? '<span class="chev">›</span>' : ''}<span class="hide" data-act="tips:0" title="Skjul tips">✕</span>`;
+    if (ah !== this.advHtml) { this.advHtml = ah; advEl.innerHTML = ah; }
     advEl.dataset.act = `advisor:${adv.tab || ''}`;
+    advEl.hidden = s.hideTips;
+    $('#tipsbtn').hidden = !s.hideTips;
 
     const camp = activeCampaign(s);
     $('#boosts').innerHTML = (camp ? `<div class="boost camp"><span>${camp.icon}</span>${camp.name} · ${Math.ceil(camp.until - s.time)}s<i style="width:${((camp.until - s.time) / camp.total) * 100}%"></i></div>` : '') + s.boosts.map((b) => {
@@ -383,6 +389,10 @@ export class UI {
     };
     const all = Object.entries(FURNITURE);
     return `<h3>🛠️ Indretning</h3><p class="tip">Køb møbler og placér dem selv. Med 🛠️ Indret-knappen kan du flytte og dreje alt.</p>${all.filter(([, F]) => !F.decor).map(card).join('')}
+      <div class="card"><div class="av">📐</div>
+        <div class="info"><b>Mere plads</b><small>Lageret er ${fmt(90 + s.tiles.length)} felter · ${fmt((90 + s.tiles.length) * TILE * TILE)} m²</small>
+          <small class="eff">${kr(TILE_COST)} pr. felt (${TILE}×${TILE} m) · husleje +${kr(TILE_RENT)}/dag pr. felt</small></div>
+        <div class="btns"><button class="btn" data-act="expand">Udvid</button></div></div>
       <h3>🪴 Hygge & trivsel</h3><p class="tip">Et rart lager giver glade medarbejdere: alt du placerer her får teamet til at arbejde hurtigere. Trivsel nu: <b>+${Math.round(mood(s) * 100)} %</b></p>${all.filter(([, F]) => F.decor).map(card).join('')}
       <h3>⬆️ Opgraderinger</h3>` +
       Object.entries(UPGRADES).map(([k, U]) => {

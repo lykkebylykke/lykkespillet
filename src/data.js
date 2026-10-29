@@ -6,7 +6,10 @@ export const DAY_LENGTH = 120; // seconds per in-game day
 export const PACKAGING = 4; // kr per parcel
 export const FREIGHT = 15; // kr per parcel
 // Daily rent grows with the space you build.
-export const rentOf = (s) => 100 + 40 * (s.shelves - 1) + 80 * (s.tables - 1) + 50 * (s.desks - 1);
+export const rentOf = (s) => 100 + 40 * (s.shelves - 1) + 80 * (s.tables - 1) + 50 * (s.desks - 1) + TILE_RENT * s.tiles.length;
+// Extra floor space, bought per 2×2 m tile.
+export const TILE_COST = 300;
+export const TILE_RENT = 6;
 export const EXPENSES = {
   goods: '📦 Varekøb', staff: '👥 Løn', rent: '🏠 Husleje', packaging: '🎁 Emballage', freight: '🚚 Fragt',
   hiring: '🤝 Rekruttering & oplæring', invest: '🏗️ Byggeri & upgrades', marketing: '📣 Annoncer & boosts', interest: '🏦 Renter',

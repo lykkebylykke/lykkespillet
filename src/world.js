@@ -3,8 +3,14 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { BOX_SLOTS, DELIVERY_SPOT, PALLET, FURNITURE, PRODUCTS, productById } from './data.js';
 import { capacity, stockTotal, queuedCount } from './state.js';
 
-export const W = 18, D = 20;
-const CELL = 0.5, NX = W / CELL, NZ = D / CELL;
+// The lot is split into 2×2 m tiles; the shop owns the original 18×20 m and can buy more (not towards the road).
+export const TILE = 2;
+export const LOT = { x0: -12, z0: -8, x1: 18, z1: 32 };
+export const TILES = { i0: LOT.x0 / TILE, j0: LOT.z0 / TILE, i1: LOT.x1 / TILE, j1: LOT.z1 / TILE };
+export const tileKey = (i, j) => `${i},${j}`;
+export const isBaseTile = (i, j) => i >= 0 && i < 9 && j >= 0 && j < 10;
+const CELL = 0.5, NX = (LOT.x1 - LOT.x0) / CELL, NZ = (LOT.z1 - LOT.z0) / CELL;
+const cellX = (c) => LOT.x0 + ((c % NX) + 0.5) * CELL, cellZ = (c) => LOT.z0 + (((c / NX) | 0) + 0.5) * CELL;
 
 const matCache = new Map();
 export function mat(color, extra) {
@@ -58,7 +64,7 @@ function plane(w, d, color, x, z, y = 0) {
 }
 
 // Areas furniture may not cover: the receiving floor and the parcel pallet.
-const KEEP_CLEAR = [{ minX: 11, maxX: 16.6, minZ: 1.4, maxZ: 6.2 }, { minX: PALLET.x - 1.1, maxX: W, minZ: PALLET.z - 1.1, maxZ: PALLET.z + 1.1 }];
+const KEEP_CLEAR = [{ minX: 11, maxX: 16.6, minZ: 1.4, maxZ: 6.2 }, { minX: PALLET.x - 1.1, maxX: 18, minZ: PALLET.z - 1.1, maxZ: PALLET.z + 1.1 }];
 const overlaps = (a, b, m = 0) => a.minX < b.maxX + m && a.maxX > b.minX - m && a.minZ < b.maxZ + m && a.maxZ > b.minZ - m;
 const inside = (o, x, z, m) => x > o.minX - m && x < o.maxX + m && z > o.minZ - m && z < o.maxZ + m;
 
@@ -105,6 +111,7 @@ export class World {
     this.cw = 1; this.ch = 1;
 
     this.buildStatic();
+    this.buildRoom();
     this.rebuild();
     this.buildLabels();
     this.resize();
@@ -138,48 +145,6 @@ export class World {
     sc.add(plane(1.6, 4.5, '#c9ccd3', 18.8, 3.25, -0.01));
     sc.add(plane(1.6, 3.5, '#c9ccd3', 18.8, 15.75, -0.01));
 
-    // Room floors
-    sc.add(plane(10, 7, '#f6dfbd', 5, 3.5));
-    sc.add(plane(8, 7, '#e7def7', 14, 3.5));
-    sc.add(plane(10, 13, '#dfe4ec', 5, 13.5));
-    sc.add(plane(8, 13, '#d3efe6', 14, 13.5));
-    sc.add(plane(8.8, 4.6, '#ffd6e5', 4.6, 3.45, 0.004));
-    sc.add(plane(5.4, 2.8, '#d6c8f0', 13.75, 2.85, 0.004));
-    for (const [x, z, w, d] of [[13.75, 1.45, 5.4, 0.1], [13.75, 4.25, 5.4, 0.1], [11.05, 2.85, 0.1, 2.9], [16.45, 2.85, 0.1, 2.9]]) sc.add(plane(w, d, '#ffc300', x, z, 0.008));
-
-    sc.add(floorText('KONTOR', 8.2, 6.4, 3.6, 0.9));
-    sc.add(floorText('VAREMODTAGELSE', 14.6, 6.4, 5, 0.8));
-    sc.add(floorText('LAGER', 5, 19.1, 3, 0.9));
-    sc.add(floorText('PAKKERI', 11.6, 19.1, 3.4, 0.9));
-
-    // Walls
-    const wall = '#fff3e3';
-    sc.add(at(rbox(18.5, 2.4, 0.25, wall), 9, 1.2, -0.125));
-    sc.add(at(rbox(0.25, 2.4, 20.5, wall), -0.125, 1.2, 10));
-    sc.add(at(rbox(18.5, 0.12, 0.3, '#ff8fab'), 9, 2.4, -0.125));
-    sc.add(at(rbox(0.3, 0.12, 20.5, '#ff8fab'), -0.125, 2.4, 10));
-    for (const x of [1.6, 7.5, 12, 16]) sc.add(at(rbox(1.6, 0.9, 0.06, '#bde0fe'), x, 1.45, 0.02));
-    for (const z of [9, 13, 17]) sc.add(at(rbox(0.06, 0.9, 1.6, '#bde0fe'), 0.02, 1.45, z));
-    const sign = textPlane('LykkeShop', 3.2, 0.8, { color: '#ffffff', bg: '#ff5d8f' });
-    sign.position.set(4.3, 1.6, 0.03);
-    sc.add(sign);
-    for (const [z0, z1] of [[0, 1], [5.5, 14], [17.5, 20]]) sc.add(at(rbox(0.25, 0.5, z1 - z0, wall), 18.125, 0.25, (z0 + z1) / 2));
-    for (const z of [1, 5.5, 14, 17.5]) sc.add(at(rbox(0.32, 2.4, 0.32, '#ff8fab'), 18.125, 1.2, z));
-    sc.add(at(rbox(0.32, 0.3, 4.8, '#ff8fab'), 18.125, 2.35, 3.25));
-    sc.add(at(rbox(0.32, 0.3, 3.8, '#ff8fab'), 18.125, 2.35, 15.75));
-    sc.add(at(rbox(18.25, 0.5, 0.25, wall), 9, 0.25, 20.125));
-
-    // Locked showroom teaser
-    sc.add(plane(18, 5, '#d8d8e0', 9, 22.75, -0.01));
-    sc.add(floorText('🔒 SHOWROOM · LEVEL 20', 9, 22.6, 9, 1.1, { color: 'rgba(80,80,110,0.35)' }));
-    for (const x of [3, 15]) {
-      const g = new THREE.Group();
-      g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 1.2, 12), mat('#c3c3cf', { transparent: true, opacity: 0.6 })), 0, 0.6, 0));
-      g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 10), mat('#c3c3cf', { transparent: true, opacity: 0.6 })), 0, 1.35, 0));
-      g.position.set(x, 0, 22.5);
-      sc.add(g);
-    }
-
     // Pallet for outgoing parcels
     sc.add(at(rbox(1.3, 0.16, 1.3, '#c8a165', 0.03), PALLET.x, 0.08, PALLET.z));
     this.staticObstacles.push(this.aabb(PALLET.x, PALLET.z, 0.65, 0.65));
@@ -193,8 +158,8 @@ export class World {
     }
     this.staticObstacles.push({ minX: 11.2, maxX: 16.3, minZ: 1.6, maxZ: 4.1 });
 
-    // Plants
-    for (const [x, z] of [[0.6, 0.6], [9.4, 0.6], [0.6, 19.4], [17.4, 19.4], [17.4, 0.5], [9.4, 6.5]]) {
+    // Plants along the front wall (it never moves)
+    for (const [x, z] of [[17.4, 19.4], [17.4, 0.5]]) {
       const g = new THREE.Group();
       g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.18, 0.4, 14), mat('#e07a5f')), 0, 0.2, 0));
       g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.36, 14, 12), mat('#52b788')), 0, 0.68, 0));
@@ -204,6 +169,7 @@ export class World {
       sc.add(g);
       this.staticObstacles.push(this.aabb(x, z, 0.3, 0.3));
     }
+    this.fixedObstacles = this.staticObstacles;
 
     this.truck = this.makeTruck('#ff5d8f', 'LykkeFragt');
     this.van = this.makeTruck('#ffc300', 'Pakkepost', 0.85);
@@ -225,6 +191,69 @@ export class World {
     this.marker.position.y = 0.03;
     this.marker.visible = false;
     sc.add(this.marker);
+  }
+
+  // ---------- the room: owned 2×2 m tiles, floor, walls ----------
+  ownsTile(i, j) { return isBaseTile(i, j) || this.tileSet.has(tileKey(i, j)); }
+  isFloor(x, z) { return this.ownsTile(Math.floor(x / TILE), Math.floor(z / TILE)); }
+  // Every point of the box (grown by m) stands on our floor.
+  boxOnFloor(b, m = 0) {
+    const e = 0.001, x0 = b.minX - m + e, x1 = b.maxX + m - e, z0 = b.minZ - m + e, z1 = b.maxZ + m - e;
+    const nx = Math.ceil((x1 - x0) / 0.5), nz = Math.ceil((z1 - z0) / 0.5);
+    for (let a = 0; a <= nx; a++) for (let c = 0; c <= nz; c++) if (!this.isFloor(x0 + ((x1 - x0) * a) / nx, z0 + ((z1 - z0) * c) / nz)) return false;
+    return true;
+  }
+
+  buildRoom() {
+    const sc = this.scene, own = (i, j) => this.ownsTile(i, j);
+    this.tileSet = new Set(this.s.tiles);
+    if (this.room) sc.remove(this.room);
+    const g = (this.room = new THREE.Group());
+    sc.add(g);
+    const wall = '#fff3e3', trim = '#ff8fab', walls = [];
+    for (let i = TILES.i0; i < TILES.i1; i++) for (let j = TILES.j0; j < TILES.j1; j++) {
+      if (!own(i, j)) continue;
+      const x0 = i * TILE, z0 = j * TILE;
+      g.add(plane(TILE, TILE, '#f1ebe2', x0 + 1, z0 + 1));
+      // Back walls (north/west) are tall with windows; the front ones are low so you can see in.
+      if (!own(i, j - 1)) {
+        g.add(at(rbox(2.25, 2.4, 0.25, wall), x0 + 1, 1.2, z0 - 0.125), at(rbox(2.25, 0.12, 0.3, trim), x0 + 1, 2.4, z0 - 0.125));
+        if ((i + j) % 2) g.add(at(rbox(1.4, 0.9, 0.06, '#bde0fe'), x0 + 1, 1.45, z0 + 0.02));
+        walls.push({ minX: x0 - 0.125, maxX: x0 + 2.125, minZ: z0 - 0.25, maxZ: z0 });
+      }
+      if (!own(i - 1, j)) {
+        g.add(at(rbox(0.25, 2.4, 2.25, wall), x0 - 0.125, 1.2, z0 + 1), at(rbox(0.3, 0.12, 2.25, trim), x0 - 0.125, 2.4, z0 + 1));
+        if ((i + j) % 2) g.add(at(rbox(0.06, 0.9, 1.4, '#bde0fe'), x0 + 0.02, 1.45, z0 + 1));
+        walls.push({ minX: x0 - 0.25, maxX: x0, minZ: z0 - 0.125, maxZ: z0 + 2.125 });
+      }
+      if (!own(i, j + 1)) {
+        g.add(at(rbox(2.25, 0.5, 0.25, wall), x0 + 1, 0.25, z0 + 2.125));
+        walls.push({ minX: x0 - 0.125, maxX: x0 + 2.125, minZ: z0 + 2, maxZ: z0 + 2.25 });
+      }
+      if (!own(i + 1, j) && !(i === TILES.i1 - 1 && isBaseTile(i, j))) {
+        g.add(at(rbox(0.25, 0.5, 2.25, wall), x0 + 2.125, 0.25, z0 + 1));
+        walls.push({ minX: x0 + 2, maxX: x0 + 2.25, minZ: z0 - 0.125, maxZ: z0 + 2.125 });
+      }
+    }
+    // The original front towards the road, with the two doors.
+    for (const [z0, z1] of [[0, 1], [5.5, 14], [17.5, 20]]) g.add(at(rbox(0.25, 0.5, z1 - z0, wall), 18.125, 0.25, (z0 + z1) / 2));
+    for (const z of [1, 5.5, 14, 17.5]) g.add(at(rbox(0.32, 2.4, 0.32, trim), 18.125, 1.2, z));
+    g.add(at(rbox(0.32, 0.3, 4.8, trim), 18.125, 2.35, 3.25), at(rbox(0.32, 0.3, 3.8, trim), 18.125, 2.35, 15.75));
+    walls.push({ minX: 18, maxX: 18.25, minZ: 0, maxZ: 20 });
+    // Shop sign on the back wall
+    let jn = 0;
+    while (own(2, jn - 1)) jn--;
+    const sign = textPlane('LykkeShop', 2.4, 0.6, { color: '#ffffff', bg: '#ff5d8f' });
+    sign.position.set(5, 1.6, jn * TILE + 0.03);
+    g.add(sign);
+    // Red floor where nothing may be placed: receiving and the parcel pallet
+    for (const [k, label, lx, lz, lw] of [[0, 'VAREMODTAGELSE', 14.6, 6.5, 5], [1, 'VARELEVERING', 15.3, 17.4, 3.6]]) {
+      const o = KEEP_CLEAR[k], w = o.maxX - o.minX, d = o.maxZ - o.minZ, cx = (o.minX + o.maxX) / 2, cz = (o.minZ + o.maxZ) / 2;
+      g.add(plane(w, d, '#ffd3d8', cx, cz, 0.004));
+      for (const [x, z, pw, pd] of [[cx, o.minZ, w, 0.1], [cx, o.maxZ, w, 0.1], [o.minX, cz, 0.1, d], [o.maxX, cz, 0.1, d]]) g.add(plane(pw, pd, '#ef476f', x, z, 0.008));
+      g.add(floorText(label, lx, lz, lw, 0.8, { color: 'rgba(239,71,111,0.45)' }));
+    }
+    this.staticObstacles = [...this.fixedObstacles, ...walls];
   }
 
   setMarker(p) {
@@ -251,8 +280,8 @@ export class World {
     let best = null, bd = blocked ? 3.5 : 1.6;
     for (const z of this.zones) { const d = Math.hypot(z.x - p.x, z.z - p.z); if (d < bd) { bd = d; best = z; } }
     if (best) return { x: best.x, z: best.z };
-    if (blocked) { const c = this.nearestFree(this.cellOf(p.x, p.z)); return { x: ((c % NX) + 0.5) * CELL, z: (((c / NX) | 0) + 0.5) * CELL }; }
-    return { x: THREE.MathUtils.clamp(p.x, 0.3, W - 0.3), z: THREE.MathUtils.clamp(p.z, 0.3, D - 0.3) };
+    if (blocked || !this.isFloor(p.x, p.z)) { const c = this.nearestFree(this.cellOf(p.x, p.z)); return { x: cellX(c), z: cellZ(c) }; }
+    return { x: p.x, z: p.z };
   }
 
   makeTruck(color, label, scale = 1) {
@@ -397,8 +426,8 @@ export class World {
   // Can this piece go here? Checks walls, overlaps, room in front and that every station stays reachable.
   canPlace(type, x, z, rot, ignoreId) {
     const fp = footprint(type, x, z, rot), b = fp.box, decor = FURNITURE[type].decor;
-    if (b.minX < 0.05 || b.maxX > W - 0.05 || b.minZ < 0.05 || b.maxZ > D - 0.05) return { ok: false, why: 'Uden for rummet' };
-    if (!decor && (fp.ax < 0.35 || fp.ax > W - 0.35 || fp.az < 0.35 || fp.az > D - 0.35)) return { ok: false, why: 'Der skal være plads foran' };
+    if (!this.boxOnFloor(b)) return { ok: false, why: 'Uden for rummet' };
+    if (!decor && !this.boxOnFloor(this.aabb(fp.ax, fp.az, 0, 0), 0.35)) return { ok: false, why: 'Der skal være plads foran' };
     const others = this.s.furniture.filter((f) => f.id !== ignoreId).map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
     const solid = [...this.staticObstacles, ...others.map((o) => o.fp.box)];
     if ([...solid, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05))) return { ok: false, why: 'Der står noget i vejen' };
@@ -486,15 +515,15 @@ export class World {
   makeGrid(obstacles) {
     const grid = new Uint8Array(NX * NZ);
     for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
-      const x = (i + 0.5) * CELL, z = (j + 0.5) * CELL;
-      if (obstacles.some((o) => inside(o, x, z, 0.3))) grid[j * NX + i] = 1;
+      const x = LOT.x0 + (i + 0.5) * CELL, z = LOT.z0 + (j + 0.5) * CELL;
+      if (!this.isFloor(x, z) || obstacles.some((o) => inside(o, x, z, 0.3))) grid[j * NX + i] = 1;
     }
     return grid;
   }
 
   cellOf(x, z) {
-    const i = THREE.MathUtils.clamp(Math.floor(x / CELL), 0, NX - 1);
-    const j = THREE.MathUtils.clamp(Math.floor(z / CELL), 0, NZ - 1);
+    const i = THREE.MathUtils.clamp(Math.floor((x - LOT.x0) / CELL), 0, NX - 1);
+    const j = THREE.MathUtils.clamp(Math.floor((z - LOT.z0) / CELL), 0, NZ - 1);
     return j * NX + i;
   }
 
@@ -549,7 +578,7 @@ export class World {
     if (!found) return [{ x: tx, z: tz }];
     const cells = [];
     for (let c = goal; c !== -1 && c !== start; c = came[c]) cells.unshift(c);
-    const pts = cells.map((c) => ({ x: ((c % NX) + 0.5) * CELL, z: (((c / NX) | 0) + 0.5) * CELL }));
+    const pts = cells.map((c) => ({ x: cellX(c), z: cellZ(c) }));
     pts.push({ x: tx, z: tz });
     // String-pull: skip waypoints we can see past.
     const out = [];
@@ -575,8 +604,8 @@ export class World {
         p.x += pen[1] * (pen[0] + r); p.z += pen[2] * (pen[0] + r);
       }
     }
-    p.x = THREE.MathUtils.clamp(p.x, r, W - r);
-    p.z = THREE.MathUtils.clamp(p.z, r, D - r);
+    p.x = THREE.MathUtils.clamp(p.x, LOT.x0 + r, LOT.x1 - r);
+    p.z = THREE.MathUtils.clamp(p.z, LOT.z0 + r, LOT.z1 - r);
   }
 
   nearestShelf(x, z) {

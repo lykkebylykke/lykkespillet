@@ -131,6 +131,9 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 .quest .qt { font-weight: 700; }
 .advisor .qt { font-weight: 500; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 13px; }
 .quest small { color: var(--muted); font-weight: 600; flex: none; }
+.advisor .hide { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.8); color: var(--muted); font-size: 11px; }
+.advisor[hidden], #tipsbtn[hidden] { display: none; }
+#tipsbtn { flex: none; background: #eaf2ff; border-radius: 99px; padding: 2px 8px; font-size: 14px; }
 .chev { font-size: 22px; line-height: 0.6; font-weight: 700; flex: none; }
 .quest.done { background: #fff4c2; animation: pulse 1.2s infinite; }
 .quest .btn.claim { flex: none; }

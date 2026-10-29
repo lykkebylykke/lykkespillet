@@ -36,7 +36,7 @@ class Input {
       if (this.dragMode?.()) {
         if (!dragging && d < 10) return;
         dragging = true;
-        this.onDrag?.(lx, ly, e.clientX, e.clientY);
+        this.onDrag?.(lx, ly, e.clientX, e.clientY, ox, oy);
         lx = e.clientX; ly = e.clientY;
         return;
       }
@@ -103,7 +103,7 @@ function boot() {
   const builder = new Builder(world, s, player);
   const input = new Input(canvas);
   input.dragMode = () => builder.active;
-  input.onDrag = (ax, ay, bx, by) => builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by));
+  input.onDrag = (ax, ay, bx, by, ox, oy) => builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by), world.screenToGround(ox, oy));
   input.onTap = (cx, cy) => {
     if (ui.sheetOpen) return;
     const p = world.screenToGround(cx, cy);

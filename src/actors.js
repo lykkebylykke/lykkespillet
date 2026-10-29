@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mat, rbox, at, makeBox, W, D } from './world.js';
+import { mat, rbox, at, makeBox } from './world.js';
 import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, productById, bossLook } from './data.js';
 import {
   bus, capacity, stockTotal, upgVal, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
@@ -25,8 +25,8 @@ export function makeCharacter({ skin, hair, shirt, pants = '#3d405b', hat = null
   const body = at(m(GEO.body, shirt), 0, 0.66, 0);
   const armL = at(m(GEO.limb, shirt), -0.33, 0.88, 0), armR = at(m(GEO.limb, shirt), 0.33, 0.88, 0);
   const head = at(m(GEO.head, skin), 0, 1.16, 0);
-  const hairM = at(m(GEO.head, hair), 0, 1.22, -0.05);
-  hairM.scale.set(1.06, 0.78, 1.04);
+  const hairM = at(m(GEO.head, hair), 0, 1.25, -0.05);
+  hairM.scale.set(1.09, 0.82, 1.06);
   const eyeL = at(m(GEO.eye, '#1d1d1d'), -0.09, 1.17, 0.25), eyeR = at(m(GEO.eye, '#1d1d1d'), 0.09, 1.17, 0.25);
   const cheekL = at(new THREE.Mesh(GEO.eye, mat('#ff8fab')), -0.16, 1.1, 0.22), cheekR = at(new THREE.Mesh(GEO.eye, mat('#ff8fab')), 0.16, 1.1, 0.22);
   cheekL.scale.setScalar(1.4); cheekR.scale.setScalar(1.4);
@@ -99,8 +99,8 @@ export class Player {
   drop() {
     const s = this.s, c = this.carry, a = this.mesh.rotation.y;
     if (!c) return;
-    let x = THREE.MathUtils.clamp(this.pos.x + Math.sin(a) * 0.45, 0.3, W - 0.3), z = THREE.MathUtils.clamp(this.pos.z + Math.cos(a) * 0.45, 0.3, D - 0.3);
-    if (this.w.inObstacle(x, z)) { x = this.pos.x; z = this.pos.z; }
+    let x = this.pos.x + Math.sin(a) * 0.45, z = this.pos.z + Math.cos(a) * 0.45;
+    if (this.w.inObstacle(x, z) || !this.w.isFloor(x, z)) { x = this.pos.x; z = this.pos.z; }
     if (c.kind === 'box') {
       const b = s.boxes.find((o) => o.id === c.boxId);
       if (b) { b.carriedBy = null; b.at = { x, z }; b.slot = null; }
