@@ -473,7 +473,7 @@ export class World {
     this.lblDelivery = this.addLabel('bubble', '', new THREE.Vector3(13.75, 1.4, 2.85));
     // These follow the first table / shelf / desk wherever it was placed.
     const above = (list, y, fallback) => () => (list()[0] ? new THREE.Vector3(list()[0].x, y, list()[0].z) : fallback);
-    this.lblOrders = this.addLabel('bubble', '', above(() => this.tables, 1.9, new THREE.Vector3(15.6, 1.9, 9)));
+    this.lblOrders = this.addLabel('bubble orders', '', above(() => this.tables, 1.9, new THREE.Vector3(15.6, 1.9, 9)));
     this.lblStock = this.addLabel('bubble', '', above(() => this.shelves, 2.5, new THREE.Vector3(4.75, 2.5, 9.2)));
     this.lblTickets = this.addLabel('bubble', '', above(() => this.desks, 2.2, new THREE.Vector3(4.6, 2.2, 3.4)));
     this.lblQuest = this.addLabel('qarrow', '⬇', new THREE.Vector3(), { clamp: true });
@@ -750,8 +750,11 @@ export class World {
 
     const waiting = s.boxes.filter((b) => !b.carriedBy && !b.at).length;
     this.lblDelivery.set(waiting ? `📦 ${waiting}` : s.deliveries.length ? `🚚 ${s.deliveries.length} på vej` : '');
-    const q = queuedCount(s);
-    this.lblOrders.set(q ? `🧾 ${q} ${q === 1 ? 'ordre' : 'ordrer'}` : '');
+    // What's waiting to be packed, per product: grey = still on the shelf, green ✓ = already fetched.
+    const q = queuedCount(s), open = {};
+    for (const o of s.orders) (open[o.productId] ??= { q: 0, p: 0 })[o.status === 'picked' ? 'p' : 'q']++;
+    const chips = Object.entries(open).map(([id, n]) => (n.q ? `<i>${productById[id].icon}${n.q}</i>` : '') + (n.p ? `<i class="got">${productById[id].icon}${n.p}✓</i>` : '')).join('');
+    this.lblOrders.set(s.orders.length ? `🧾 ${s.orders.length} at pakke<span class="olist">${chips}</span>` : '');
     this.lblOrders.el.classList.toggle('hot', q >= 6);
     this.lblTickets.set(s.tickets ? `🎧 ${s.tickets} ${s.tickets === 1 ? 'henvendelse' : 'henvendelser'}` : '');
     this.lblTickets.el.classList.toggle('hot', s.tickets >= 5);

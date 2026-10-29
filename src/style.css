@@ -383,3 +383,10 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .lg-switch { display: block; margin: 12px auto 0; background: none; color: var(--pink); font-weight: 700; font-size: 13px; }
 #login .btn.big { margin-top: 8px; }
 .tip.acct { margin-top: 14px; }
+
+/* ---------- what's on the packing table's to-do list ---------- */
+.bubble.orders .in { border-radius: 14px; text-align: center; padding: 4px 9px 5px; }
+.olist { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; max-width: 190px; margin-top: 3px; white-space: normal; }
+.olist i { font-style: normal; font-size: 12px; background: #f1eef7; color: var(--ink); border-radius: 8px; padding: 1px 5px; }
+.olist i.got { background: #d6f5e3; color: #1e8c57; }
+.bubble.hot .olist i { background: rgba(255, 255, 255, 0.85); }

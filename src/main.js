@@ -25,6 +25,7 @@ class Input {
       knob.style.transform = 'translate(-50%,-50%)';
     };
     canvas.addEventListener('pointerdown', (e) => {
+      this.onPress?.();
       id = e.pointerId; ox = lx = e.clientX; oy = ly = e.clientY; t0 = performance.now(); dragging = false;
       clearTimeout(holdTimer);
       holdTimer = setTimeout(() => id === e.pointerId && !dragging && !this.dragMode?.() && showJoy(), 220);
@@ -104,9 +105,10 @@ function boot() {
   const builder = new Builder(world, s, player);
   const input = new Input(canvas);
   input.dragMode = () => builder.active;
+  // The game stays playable with a menu open; on a phone the menu covers the game, so touching it closes the menu.
+  input.onPress = () => { if (ui.sheetOpen && innerWidth < 720) ui.open('home'); };
   input.onDrag = (ax, ay, bx, by, ox, oy) => builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by), world.screenToGround(ox, oy));
   input.onTap = (cx, cy) => {
-    if (ui.sheetOpen) return;
     const p = world.screenToGround(cx, cy);
     if (builder.active) builder.onTap(p);
     else if (p) player.goTo(world.walkTarget(p));
@@ -136,7 +138,7 @@ function boot() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (!creating) simUpdate(s, dt);
-    player.update(dt, creating || ui.sheetOpen || builder.active ? { x: 0, z: 0 } : input.dir);
+    player.update(dt, creating || builder.active ? { x: 0, z: 0 } : input.dir);
     builder.update(player.pos);
     crew.update(dt);
     ui.update(dt);
