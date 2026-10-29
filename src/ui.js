@@ -550,7 +550,7 @@ export class UI {
     const tonight = [['👥 Løn', wages], ['🏠 Husleje', rentOf(s)], ...s.loans.map((l) => { const r = loanRate(l); return [`${l.icon} ${l.name} (afdrag ${kr(r.principal)} + renter ${kr(r.interest)})`, r.principal + r.interest]; })].filter(([, n]) => n);
     const pending = tonight.reduce((a, [, n]) => a + n, 0), dayCost = td.costs + pending;
     const lines = Object.entries(EXPENSES).filter(([k]) => td.exp[k] || st.exp[k])
-      .map(([k, name]) => `<tr><td>${name}</td><td>${kr(td.exp[k] || 0)}</td><td>${kr(st.exp[k] || 0)}</td></tr>`).join('');
+      .map(([k, name]) => `<tr><td>${name}</td><td>${td.exp[k] ? kr(td.exp[k]) : ''}</td><td>${kr(st.exp[k] || 0)}</td></tr>`).join('');
     const max = Math.max(1, ...h.map((d) => Math.max(d.revenue, d.costs)));
     const bars = h.length
       ? `<div class="bars">${h.map((d) => `<div class="bar"><small>${fmt(d.revenue - d.costs)}</small><div class="pair"><i style="height:${(d.revenue / max) * 100}%"></i><i class="cost" style="height:${(d.costs / max) * 100}%"></i></div><span>D${d.day}</span></div>`).join('')}</div>
