@@ -81,12 +81,13 @@ function spawnOrder(s) {
 
 // ---------- loans ----------
 // Deficit days among the last 7 finished days.
-export const badDays = (s) => s.stats.history.slice(-7).filter((d) => dayResult(d) < 0).length;
+// Days that ended with a negative balance (older saved days have no balance and don't count).
+export const badDays = (s) => s.stats.history.slice(-7).filter((d) => d.bal < 0).length;
 // Why the bank says no (or null if it says yes). Several loans at once, but only one of each kind.
 export function loanBlock(s, L) {
   if (s.loans.some((l) => l.id === L.id)) return 'Du har allerede dette lån';
   if (s.level < L.lvl) return `🔒 Lvl ${L.lvl}`;
-  if (badDays(s) > L.maxBad) return `For mange underskudsdage (${badDays(s)}/7)`;
+  if (badDays(s) > L.maxBad) return `For mange dage i minus (${badDays(s)}/7)`;
   return null;
 }
 
@@ -185,8 +186,6 @@ export function happiness(s, e) {
 export const happyEff = (v) => 0.75 + v / 200;
 export const empEff = (s, e) => happyEff(happiness(s, e).v);
 
-// Operating result: building and upgrades are investments, so they don't count as a deficit.
-export const dayResult = (t) => t.revenue - t.costs + (t.exp?.invest || 0);
 
 function endDay(s) {
   const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
@@ -194,10 +193,11 @@ function endDay(s) {
   charge(s, rentOf(s), 'rent');
   payLoans(s);
   const t = s.stats.today;
-  s.redDays = dayResult(t) < 0 || s.money < 0 ? s.redDays + 1 : 0;
+  // A bad day is one that ends with less than 0 kr on the account – spending money you have is fine.
+  s.redDays = s.money < 0 ? s.redDays + 1 : 0;
   if (s.redDays >= BANKRUPT_DAYS) { s.bankrupt = true; s.bankruptWhy = 'days'; }
-  else if (s.redDays >= 2) bus.emit('toast', `⚠️ Underskud ${s.redDays} dage i træk – efter ${BANKRUPT_DAYS} går du konkurs!`, 'bad', 6000);
-  s.stats.history.push({ day: s.day, ...t, wages });
+  else if (s.redDays >= 2) bus.emit('toast', `⚠️ Saldoen har været i minus ${s.redDays} dage i træk – efter ${BANKRUPT_DAYS} går du konkurs!`, 'bad', 6000);
+  s.stats.history.push({ day: s.day, ...t, wages, bal: Math.round(s.money) });
   if (s.stats.history.length > 7) s.stats.history.shift();
   bus.emit('dayEnd', { day: s.day, ...t, wages });
   s.stats.today = newDay();
@@ -218,10 +218,11 @@ export function rollTrends(s) {
   if (open.length < 2) return;
   if (s.trend && --s.trend.days > 0) bus.emit('toast', `🔥 ${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender stadig${s.trend.days === 1 ? ' – sidste dag' : ''}`, 'event');
   else {
-    const p = pick(open.filter((q) => q.id !== s.trend?.id));
+    const p = pick(open.filter((q) => q.id !== s.trend?.id && q.id !== s.flop?.id));
     s.trend = { id: p.id, days: rollDays() };
     bus.emit('toast', `🔥 Ny trend: ${p.icon} ${p.name} er det alle vil have! Efterspørgsel ×${TREND.hot}`, 'event', 6000);
   }
+  if (s.flop?.id === s.trend.id) s.flop = null; // a product can't be in and out at once
   if (s.flop && --s.flop.days > 0) return;
   s.flop = null;
   const mine = listed(s).filter((p) => p.id !== s.trend.id);
@@ -335,7 +336,7 @@ export function advisor(s) {
   const kit = Object.values(s.kit).reduce((a, b) => a + b, 0);
   if (kit) return { text: `${kit} ${kit === 1 ? 'møbel venter' : 'møbler venter'} på at blive placeret → tryk 📦 Placér`, tab: null };
   if (!listed(s).length) return { text: 'Pak kassen ud og læg varerne på reolen for at åbne webshoppen', tab: null };
-  if (s.redDays >= 2) return { text: `Underskud ${s.redDays} dage i træk – ${BANKRUPT_DAYS - s.redDays} dage til konkurs! → se Økonomi`, tab: 'stats' };
+  if (s.redDays >= 2) return { text: `I minus ${s.redDays} dage i træk – ${BANKRUPT_DAYS - s.redDays} dage til konkurs! → se Økonomi`, tab: 'stats' };
   if (s.money < 0) return { text: 'Negativ saldo! Sælg mere eller skær ned på lønudgifter', tab: 'staff' };
   if (deskless) return { text: `${deskless.name} mangler et skrivebord → køb et under Indretning`, tab: 'upgrades' };
   if (activeCampaign(s) && q >= 3) return { text: `${s.campaign.icon} Kampagne! Ordrerne vælter ind – løb, ${s.boss.name}! ${runner(s.boss)}`, tab: null };

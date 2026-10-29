@@ -7,7 +7,7 @@ import {
   spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture,
 } from './state.js';
 import {
-  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult, loanBlock, happiness, happyEff,
+  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, loanBlock, happiness, happyEff,
 } from './sim.js';
 import { TILE } from './world.js';
 import { cloud, logout } from './cloud.js';
@@ -201,7 +201,7 @@ export class UI {
     const top = Object.entries(s.sold || {}).sort((a, b) => b[1] - a[1])[0];
     const why = s.bankruptWhy === 'stuck'
       ? 'Kassen er tom, lageret er tomt, og banken vil ikke låne dig flere penge.'
-      : `Webshoppen havde underskud ${BANKRUPT_DAYS} dage i træk, og banken har lukket butikken.`;
+      : `Saldoen var i minus ${BANKRUPT_DAYS} dage i træk, og banken har lukket butikken.`;
     const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
     $('#toasts').innerHTML = '';
     $('#modal').innerHTML = `<div class="card-modal summary">
@@ -510,18 +510,18 @@ export class UI {
   // How close the shop is to bankruptcy.
   r_risk() {
     const s = this.s, n = s.redDays;
-    // Forecast: what the day will count as once wages, rent and interest are paid tonight.
-    const today = dayResult(s.stats.today) - s.employees.reduce((a, e) => a + salaryOf(e), 0) - rentOf(s) - s.loans.reduce((a, l) => a + loanRate(l).interest, 0);
+    // Forecast: the balance once wages, rent and loan installments are paid tonight.
+    const tonight = s.money - s.employees.reduce((a, e) => a + salaryOf(e), 0) - rentOf(s) - s.loans.reduce((a, l) => { const r = loanRate(l); return a + r.principal + r.interest; }, 0);
     const dots = Array.from({ length: BANKRUPT_DAYS }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
     return `<div class="risk ${n >= 4 ? 'hot' : ''}">
-      <div><b>${n ? `⚠️ Underskud ${n} ${n === 1 ? 'dag' : 'dage'} i træk` : '✅ Ingen underskudsdage'}</b><div class="rdots">${dots}</div></div>
-      <small>Har du underskud (eller negativ saldo) ${BANKRUPT_DAYS} dage i træk, går du konkurs. Køb af møbler og upgrades tæller ikke som underskud.
-      Forventet i dag (efter løn, husleje og renter): ${today >= 0 ? '+' : ''}${kr(today)}</small></div>`;
+      <div><b>${n ? `⚠️ I minus ${n} ${n === 1 ? 'dag' : 'dage'} i træk` : '✅ Saldoen er i plus'}</b><div class="rdots">${dots}</div></div>
+      <small>Slutter dagen ${BANKRUPT_DAYS} gange i træk med en saldo under 0 kr, går du konkurs. Det er fint at bruge pengene, så længe der er penge på kontoen.
+      Saldo i aften (efter løn, husleje og afdrag): <b class="${tonight < 0 ? 'warn' : ''}">${kr(tonight)}</b></small></div>`;
   }
 
   r_loans() {
     const s = this.s;
-    return `<h3>🏦 Lån</h3><p class="tip">Lån penge til at vokse hurtigere. Lånene betales tilbage med renter hver aften. Du kan have flere lån, men kun ét af hver slags – og banken kigger på dine underskudsdage den seneste uge.</p>` +
+    return `<h3>🏦 Lån</h3><p class="tip">Lån penge til at vokse hurtigere. Lånene betales tilbage med renter hver aften. Du kan have flere lån, men kun ét af hver slags – og banken kigger på, hvor mange dage du har været i minus den seneste uge.</p>` +
       LOANS.map((L) => {
         const l = s.loans.find((x) => x.id === L.id);
         if (l) {
@@ -533,7 +533,7 @@ export class UI {
         }
         const interest = Math.round(L.amount * L.rate), per = Math.round((L.amount + interest) / L.days), why = loanBlock(s, L);
         const locked = why?.startsWith('🔒'), bad = why && !locked;
-        const req = L.maxBad ? `højst ${L.maxBad} underskudsdag${L.maxBad === 1 ? '' : 'e'} den seneste uge` : 'ingen underskudsdage den seneste uge';
+        const req = L.maxBad ? `højst ${L.maxBad} ${L.maxBad === 1 ? 'dag' : 'dage'} i minus den seneste uge` : 'ingen dage i minus den seneste uge';
         return `<div class="card"><div class="av">${L.icon}</div>
           <div class="info"><b>${L.name} · ${kr(L.amount)}</b><small>${Math.round(L.rate * 100)} % rente (${kr(interest)}) · ${L.days} dage · ca. ${kr(per)}/dag</small>
             <small class="${bad ? 'warn' : 'eff'}">Krav: ${req}${bad ? ` – du har ${why.match(/\d+/)[0]}` : ''}</small></div>

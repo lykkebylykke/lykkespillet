@@ -28,7 +28,7 @@ export const newDay = () => ({ orders: 0, revenue: 0, costs: 0, lost: 0, exp: {}
 
 export function newState() {
   return {
-    v: 4, money: 1500, gems: 5, xp: 0, level: 1,
+    v: 5, money: 1500, gems: 5, xp: 0, level: 1,
     time: 0, day: 1, dayTime: 0, eventT: 200, parcelT: 0, pickupAt: 0,
     stock: {}, everStocked: {}, priceMode: {}, sold: {},
     orders: [], nextId: 1,
@@ -72,6 +72,8 @@ export function loadState() {
       }
       for (const type in FURNITURE) s.kit[type] ??= 0;
       s.boss ??= { ...DEFAULT_BOSS };
+      // v5: a bad day means a negative balance, not a day that cost more than it earned.
+      const v5 = s.v < 5 && s.money >= 0;
       if (s.trend?.until != null) s.trend = null; // old trends lasted seconds; now they last days
       for (const id of Object.keys(AUTO_TASKS)) if (!s.auto.prio.includes(id)) s.auto.prio.push(id);
       if (s.loan) s.loans.push(s.loan);
@@ -87,6 +89,8 @@ export function loadState() {
         }
         s.v = 4;
       }
+      if (v5) s.redDays = 0;
+      s.v = 5;
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;
       for (const o of s.orders) {

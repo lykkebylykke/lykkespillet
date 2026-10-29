@@ -16,12 +16,12 @@ export const EXPENSES = {
 };
 // Bank loans: paid back in equal daily installments (principal + interest) when each day ends.
 export const LOANS = [
-// maxBad: the bank only lends if the last 7 days had at most this many deficit days.
+// maxBad: the bank only lends if at most this many of the last 7 days ended with a negative balance.
   { id: 'small', name: 'Iværksætterlån', icon: '🌱', amount: 5000, rate: 0.08, days: 7, lvl: 1, maxBad: 3 },
   { id: 'mid', name: 'Vækstlån', icon: '📈', amount: 20000, rate: 0.12, days: 10, lvl: 3, maxBad: 1 },
   { id: 'big', name: 'Erhvervslån', icon: '🏦', amount: 60000, rate: 0.18, days: 14, lvl: 6, maxBad: 0 },
 ];
-// Days in a row with a deficit (or a negative balance) before the shop goes bankrupt.
+// Days in a row ending with a negative balance before the shop goes bankrupt.
 export const BANKRUPT_DAYS = 7;
 export const MAX_LEVEL = 20;
 export const xpFor = (l) => Math.round(80 * Math.pow(l, 1.55));

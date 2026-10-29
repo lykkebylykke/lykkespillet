@@ -425,3 +425,9 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .aprio .tgl { background: #e3dfee; color: var(--muted); min-width: 36px; }
 .aprio .tgl.on { background: var(--green); color: #fff; }
 .aprio.off span, .aprio.off small { opacity: 0.45; }
+
+/* On a phone the open menu would sit under the floating buttons. */
+@media (max-width: 719px) {
+  #app:has(#sheet.open) #lbtns, #app:has(#sheet.open) #dropbtn { display: none; }
+}
+.bars small.warn { color: var(--red); }
