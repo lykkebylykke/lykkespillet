@@ -18,4 +18,5 @@ Styring: træk hvor som helst på skærmen (joystick) eller brug WASD/piletaster
 | `src/world.js` | 3D-scene, stationer, labels, pathfinding |
 | `src/actors.js` | Spiller, medarbejder-AI (generator-baseret) |
 | `src/build.js` | Indretning: placér, flyt og drej møbler |
+| `src/creator.js` | Opret din chef: navn, køn, udseende og tøj ved nyt spil |
 | `src/ui.js` | HUD, faner, mål, notifikationer |

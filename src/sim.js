@@ -1,5 +1,5 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, PLAYER_NAME,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, runner,
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
@@ -36,7 +36,7 @@ export function startCampaign(s, c) {
   s.campaign = { id: c.id, name: c.name, icon: c.icon, price: c.price, orders: c.orders, until: s.time + dur, total: dur };
   s.campCd[c.id] = s.time + dur + c.cd;
   s.stats.campaigns++;
-  bus.emit('toast', `${c.icon} ${c.name} er i gang! Ordrerne vælter ind – løb, ${PLAYER_NAME}! 🏃‍♀️`, 'event');
+  bus.emit('toast', `${c.icon} ${c.name} er i gang! Ordrerne vælter ind – løb, ${s.boss.name}! ${runner(s.boss)}`, 'event');
   bus.emit('sfx', 'fanfare');
   return true;
 }
@@ -247,7 +247,7 @@ export function advisor(s) {
   if (s.redDays >= 2) return { text: `Underskud ${s.redDays} dage i træk – ${BANKRUPT_DAYS - s.redDays} dage til konkurs! → se Økonomi`, tab: 'stats' };
   if (s.money < 0) return { text: 'Negativ saldo! Sælg mere eller skær ned på lønudgifter', tab: 'staff' };
   if (deskless) return { text: `${deskless.name} mangler et skrivebord → køb et under Indretning`, tab: 'upgrades' };
-  if (activeCampaign(s) && q >= 3) return { text: `${s.campaign.icon} Kampagne! Ordrerne vælter ind – løb, ${PLAYER_NAME}! 🏃‍♀️`, tab: null };
+  if (activeCampaign(s) && q >= 3) return { text: `${s.campaign.icon} Kampagne! Ordrerne vælter ind – løb, ${s.boss.name}! ${runner(s.boss)}`, tab: null };
   if (s.tickets >= 5) return s.level >= ROLES.support.lvl && !has('support')
     ? { text: 'For mange kundehenvendelser → ansæt kundeservice', tab: 'staff' }
     : { text: `${s.tickets} kundehenvendelser venter → besvar dem ved computeren`, tab: null };

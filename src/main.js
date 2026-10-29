@@ -5,6 +5,7 @@ import { World } from './world.js';
 import { Player, Crew } from './actors.js';
 import { UI } from './ui.js';
 import { Builder } from './build.js';
+import { Creator } from './creator.js';
 
 // ---------- input: virtual joystick + keyboard ----------
 class Input {
@@ -110,8 +111,19 @@ function boot() {
     else if (p) player.goTo(world.walkTarget(p));
   };
   window.__game = { s, world, player, crew, ui, builder };
-  // A brand-new shop starts by placing the starter kit.
-  if (!s.furniture.length && builder.kitCount()) builder.kit();
+  // A brand-new shop starts by creating the boss, then placing the starter kit.
+  const startKit = () => { if (!s.furniture.length && builder.kitCount()) builder.kit(); };
+  let creating = !s.boss;
+  if (creating) {
+    new Creator((boss) => {
+      s.boss = boss;
+      player.setLook(boss);
+      creating = false;
+      saveState(s);
+      bus.emit('toast', `Velkommen, ${boss.name}! Indret dit lager 📦`, 'good');
+      startKit();
+    });
+  } else startKit();
 
   bus.on('built', () => world.rebuild());
   bus.on('levelup', () => world.rebuild());
@@ -122,8 +134,8 @@ function boot() {
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    simUpdate(s, dt);
-    player.update(dt, ui.sheetOpen || builder.active ? { x: 0, z: 0 } : input.dir);
+    if (!creating) simUpdate(s, dt);
+    player.update(dt, creating || ui.sheetOpen || builder.active ? { x: 0, z: 0 } : input.dir);
     builder.update(player.pos);
     crew.update(dt);
     ui.update(dt);

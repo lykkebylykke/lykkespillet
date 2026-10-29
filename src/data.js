@@ -64,7 +64,14 @@ export const SUPPORT_RATE = [0.1, 0.15, 0.22, 0.3]; // tickets per second
 // The real team gets hired first; extra hires get other Danish names.
 const LAGER = ['Gry', 'Naya', 'Frederikke'];
 export const ROSTER = { some: ['Stine'], ecom: ['Lasse', 'Sophie'], packer: LAGER, stocker: LAGER, support: ['Trine'] };
-export const PLAYER_NAME = 'Janne';
+// The boss the player creates at the start; older saves keep Janne.
+export const DEFAULT_BOSS = { name: 'Janne', gender: 'kvinde', skin: '#ffd7b5', hair: '#e6be8a', hairStyle: 'bun', beard: false, shirt: '#ff5d8f', bottom: 'pants', pants: '#2b2d42', hat: '#ffc300' };
+export const GENDERS = [['kvinde', '👩 Kvinde'], ['mand', '👨 Mand'], ['andet', '🧑 Andet']];
+export const HAIR_STYLES = [['short', 'Kort'], ['long', 'Langt'], ['bun', 'Knold'], ['bald', 'Skaldet']];
+export const CLOTHES = ['#ff5d8f', '#ef476f', '#ff9f1c', '#ffd166', '#80ed99', '#2a9d8f', '#4cc9f0', '#3a86ff', '#7b61ff', '#cdb4db', '#ffffff', '#2b2d42'];
+export const HATS = [null, '#ffc300', '#ff5d8f', '#3a86ff', '#2b2d42', '#80ed99'];
+export const runner = (b) => ({ kvinde: '🏃‍♀️', mand: '🏃‍♂️' })[b.gender] || '🏃';
+export const bossLook = (b) => ({ skin: b.skin, hair: b.hair, hairStyle: b.hairStyle, beard: b.beard, shirt: b.shirt, pants: b.pants, skirt: b.bottom === 'skirt', hat: b.hat });
 
 export const SPECIALS = [
   { name: 'Viral Emma', role: 'some', special: 'viral', desc: '10 % chance for at et opslag går viralt: +200 % trafik' },

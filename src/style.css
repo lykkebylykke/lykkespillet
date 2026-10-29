@@ -316,3 +316,24 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 @media (min-width: 720px) {
   #app { max-width: none; --side: calc(50% - 240px); box-shadow: none; }
 }
+
+/* ---------- character creator ---------- */
+#creator { position: absolute; inset: 0; z-index: 12; background: rgba(45, 42, 74, 0.5); display: grid; place-items: center; padding: 14px; overflow-y: auto; }
+.cr-card { background: var(--bg); border-radius: 26px; padding: 16px 16px 18px; width: 100%; max-width: 420px; box-shadow: 0 10px 40px rgba(45, 42, 74, 0.35); animation: tin 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+.cr-card h2 { margin: 0; text-align: center; font-size: 22px; }
+.cr-card .tip { text-align: center; margin: 2px 0 6px; }
+.cr-preview { position: relative; display: flex; justify-content: center; }
+.cr-preview canvas { width: 150px; height: 170px; background: radial-gradient(circle at 50% 70%, #fff 0, #ffe3ee 70%); border-radius: 50%; }
+.cr-dice { position: absolute; right: calc(50% - 105px); bottom: 6px; width: 40px; height: 40px; border-radius: 50%; background: #fff; box-shadow: var(--shadow); font-size: 20px; }
+.cr-name { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--muted); margin: 8px 0 6px; }
+.cr-name input { font: inherit; font-size: 17px; font-weight: 700; color: var(--ink); border: 2px solid #e3dfee; border-radius: 14px; padding: 9px 12px; background: #fff; outline: none; }
+.cr-name input:focus { border-color: var(--pink); }
+.cr-opts { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+.cr-row { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 6px; }
+.cr-row small { font-weight: 700; color: var(--muted); font-size: 12px; }
+.cr-row > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.chipbtn { background: #fff; border-radius: 999px; padding: 6px 11px; font-size: 13px; font-weight: 600; box-shadow: 0 1px 3px rgba(60, 30, 90, 0.12); }
+.chipbtn.on { background: var(--pink); color: #fff; }
+.sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #d9d4e3; font-size: 11px; color: var(--muted); background: #fff; }
+.sw.on { box-shadow: 0 0 0 3px var(--pink); }
+.btn.wide { width: 100%; }

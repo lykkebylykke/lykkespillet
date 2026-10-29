@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
-  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE,
+  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS,
 } from './data.js';
 
 const SAVE_KEY = 'lykkespillet-v1';
@@ -36,7 +36,7 @@ export function newState() {
     employees: [], candidates: [],
     boosts: [], trend: null, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
     satisfaction: 80, parcels: 0,
-    loan: null, redDays: 0, bankrupt: false,
+    loan: null, redDays: 0, bankrupt: false, boss: null,
     player: { x: 14, z: 7, carry: null },
     quest: 0,
     recentLost: [],
@@ -66,6 +66,7 @@ export function loadState() {
         s.v = 3;
       }
       for (const type in FURNITURE) s.kit[type] ??= 0;
+      s.boss ??= { ...DEFAULT_BOSS };
       syncFurniture(s);
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;

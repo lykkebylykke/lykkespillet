@@ -1,23 +1,27 @@
 import * as THREE from 'three';
 import { mat, rbox, at, makeBox, W, D } from './world.js';
-import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, productById, PLAYER_NAME } from './data.js';
+import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, productById, bossLook } from './data.js';
 import {
   bus, capacity, stockTotal, upgVal, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
   addBoost, addXP, activeCampaign, mood,
 } from './state.js';
 
 const PLAYER_PACK = 1.6, EMP_PACK = 2.2;
+// Shown behind the character creator before a boss exists.
+const DEFAULT_LOOK = { skin: '#ffd7b5', hair: '#e6be8a', hairStyle: 'short', shirt: '#ff5d8f', pants: '#2b2d42', hat: '#ffc300' };
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 // ---------- character mesh ----------
 const capsule = (r, l) => new THREE.CapsuleGeometry(r, l, 4, 12);
 const GEO = { body: capsule(0.27, 0.3), limb: capsule(0.085, 0.22).translate(0, -0.17, 0), head: new THREE.SphereGeometry(0.27, 18, 14), eye: new THREE.SphereGeometry(0.035, 8, 6) };
 
-export function makeCharacter({ skin, hair, shirt, pants = '#3d405b', hat = null, bun = false }) {
+export function makeCharacter({ skin, hair, shirt, pants = '#3d405b', hat = null, bun = false, hairStyle = bun ? 'bun' : 'short', beard = false, skirt = false }) {
   const root = new THREE.Group();
   const g = new THREE.Group();
   root.add(g);
   const m = (geo, color) => { const x = new THREE.Mesh(geo, mat(color)); x.castShadow = true; return x; };
-  const legL = at(m(GEO.limb, pants), -0.12, 0.38, 0), legR = at(m(GEO.limb, pants), 0.12, 0.38, 0);
+  const legC = skirt ? skin : pants;
+  const legL = at(m(GEO.limb, legC), -0.12, 0.38, 0), legR = at(m(GEO.limb, legC), 0.12, 0.38, 0);
   const body = at(m(GEO.body, shirt), 0, 0.66, 0);
   const armL = at(m(GEO.limb, shirt), -0.33, 0.88, 0), armR = at(m(GEO.limb, shirt), 0.33, 0.88, 0);
   const head = at(m(GEO.head, skin), 0, 1.16, 0);
@@ -26,8 +30,12 @@ export function makeCharacter({ skin, hair, shirt, pants = '#3d405b', hat = null
   const eyeL = at(m(GEO.eye, '#1d1d1d'), -0.09, 1.17, 0.25), eyeR = at(m(GEO.eye, '#1d1d1d'), 0.09, 1.17, 0.25);
   const cheekL = at(new THREE.Mesh(GEO.eye, mat('#ff8fab')), -0.16, 1.1, 0.22), cheekR = at(new THREE.Mesh(GEO.eye, mat('#ff8fab')), 0.16, 1.1, 0.22);
   cheekL.scale.setScalar(1.4); cheekR.scale.setScalar(1.4);
-  g.add(legL, legR, body, armL, armR, head, hairM, eyeL, eyeR, cheekL, cheekR);
-  if (bun) { const b = at(m(GEO.head, hair), 0, 1.24, -0.27); b.scale.setScalar(0.5); g.add(b); }
+  g.add(legL, legR, body, armL, armR, head, eyeL, eyeR, cheekL, cheekR);
+  if (hairStyle !== 'bald') g.add(hairM);
+  if (hairStyle === 'bun') { const b = at(m(GEO.head, hair), 0, 1.24, -0.27); b.scale.setScalar(0.5); g.add(b); }
+  if (hairStyle === 'long') { const b = at(m(GEO.head, hair), 0, 1.0, -0.1); b.scale.set(1.08, 1.15, 0.8); g.add(b); }
+  if (beard) { const b = at(m(GEO.head, hair), 0, 1.02, 0.1); b.scale.set(0.72, 0.42, 0.62); g.add(b); }
+  if (skirt) { const sk = at(m(new THREE.CylinderGeometry(0.25, 0.36, 0.32, 16), pants), 0, 0.5, 0); g.add(sk); }
   if (hat) {
     const cap = at(new THREE.Mesh(new THREE.SphereGeometry(0.29, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), mat(hat)), 0, 1.24, 0);
     const brim = at(rbox(0.3, 0.04, 0.22, hat, 0.015), 0, 1.25, 0.28);
@@ -74,14 +82,13 @@ const faceTowards = (ch, dx, dz, dt) => {
 export class Player {
   constructor(world, s) {
     this.w = world; this.s = s;
-    this.mesh = makeCharacter({ skin: '#ffd7b5', hair: '#e6be8a', shirt: '#ff5d8f', pants: '#2b2d42', hat: '#ffc300', bun: true });
     this.pos = new THREE.Vector3(s.player.x, 0, s.player.z);
-    this.mesh.position.copy(this.pos);
-    world.scene.add(this.mesh);
+    this.setLook(s.boss);
     this.zone = null; this.prog = 0; this.t = 0; this.moving = false;
     this.ring = world.addLabel('ring', '', () => this.pos.clone().setY(2));
     this.hint = world.addLabel('hint', '', () => this.pos.clone().setY(2.35));
-    this.tag = world.addLabel('name boss', `👑 ${PLAYER_NAME} · Chef`, () => this.pos.clone().setY(-0.05));
+    this.tag = world.addLabel('name boss', '', () => this.pos.clone().setY(-0.05));
+    this.setName(s.boss);
     this.heldTable = null;
     document.getElementById('app').insertAdjacentHTML('beforeend', '<button id="dropbtn" class="fab" hidden>✋ Læg fra dig</button>');
     this.dropBtn = document.getElementById('dropbtn');
@@ -148,6 +155,18 @@ export class Player {
   }
 
   stopPath() { this.path = null; this.w.setMarker(null); }
+
+  setLook(boss) {
+    const rot = this.mesh?.rotation.y ?? 0;
+    if (this.mesh) this.w.scene.remove(this.mesh);
+    this.mesh = makeCharacter(bossLook(boss ?? DEFAULT_LOOK));
+    this.mesh.position.copy(this.pos);
+    this.mesh.rotation.y = rot;
+    this.w.scene.add(this.mesh);
+    this.setName(boss);
+  }
+
+  setName(boss) { this.tag?.set(boss ? `👑 ${esc(boss.name)} · Chef` : ''); }
 
   get carry() { return this.s.player.carry; }
   set carry(v) { this.s.player.carry = v; }
