@@ -123,9 +123,8 @@ export class World {
   }
 
   resize() {
-    const el = this.canvas.parentElement;
-    this.cw = el.clientWidth;
-    this.ch = el.clientHeight;
+    this.cw = this.canvas.clientWidth;
+    this.ch = this.canvas.clientHeight;
     this.renderer.setSize(this.cw, this.ch, false);
     const aspect = this.cw / this.ch;
     let w, h;
@@ -660,8 +659,7 @@ export class World {
   update(dt, focus, questTarget) {
     const s = this.s, now = s.time;
     // Mobile browsers change the viewport (toolbars) without reliable resize events.
-    const el = this.canvas.parentElement;
-    if (el.clientWidth !== this.cw || el.clientHeight !== this.ch) this.resize();
+    if (this.canvas.clientWidth !== this.cw || this.canvas.clientHeight !== this.ch) this.resize();
     if (this.marker.visible) this.marker.scale.setScalar(1 + Math.sin(now * 6) * 0.12);
     this.camTarget.lerp(new THREE.Vector3(focus.x, 0, focus.z), 1 - Math.exp(-dt * 5));
     this.camera.position.copy(this.camTarget).add(this.camOffset);

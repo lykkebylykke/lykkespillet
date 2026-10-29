@@ -1,5 +1,5 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, runner,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner,
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
@@ -130,6 +130,22 @@ function stuck(s) {
   if (s.money >= 0 || stockTotal(s) > 0 || s.boxes.length || s.deliveries.length || s.drops.length) return false;
   if (s.orders.some((o) => o.status === 'picked') || s.player.carry) return false;
   return LOANS.every((L) => loanBlock(s, L));
+}
+
+// How happy an employee is (0–100) and why: decor, seniority and a calm, solvent workplace help.
+export function happiness(s, e) {
+  const R = ROLES[e.role], why = [];
+  let v = 45;
+  const m = Math.round(mood(s) * 100);
+  if (m) { v += m; why.push(`🪴 Hyggeligt lager +${m}`); }
+  if (e.tier) { v += 4 * e.tier; why.push(`⬆️ ${EMP_TIERS[e.tier].name} +${4 * e.tier}`); }
+  if (e.special) { v += 5; why.push('✨ Elsker sit job +5'); }
+  if (R.desk && e.desk == null) { v -= 25; why.push('🖥️ Mangler skrivebord −25'); }
+  const busy = e.role === 'packer' ? queuedCount(s) > 8 : e.role === 'stocker' ? s.boxes.length > 4 : e.role === 'support' ? s.tickets > 5 : false;
+  if (busy) { v -= 10; why.push('😰 Travlt −10'); }
+  if (s.money < 0) { v -= 20; why.push('💸 Bekymret for lønnen −20'); }
+  else if (s.redDays >= 3) { v -= 10; why.push('📉 Dårlige tider −10'); }
+  return { v: Math.max(0, Math.min(100, v)), why };
 }
 
 // Operating result: building and upgrades are investments, so they don't count as a deficit.

@@ -131,8 +131,11 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 .quest .qt { font-weight: 700; }
 .advisor .qt { font-weight: 500; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 13px; }
 .quest small { color: var(--muted); font-weight: 600; flex: none; }
-.advisor .hide { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.8); color: var(--muted); font-size: 11px; }
-.advisor[hidden], #tipsbtn[hidden] { display: none; }
+.quest .hide, .advisor .hide { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.8); color: var(--muted); font-size: 11px; }
+.advisor[hidden], .quest[hidden], #tipsbtn[hidden], #questbtn[hidden] { display: none; }
+.quest .hide { font-size: 16px; font-weight: 700; }
+#questbtn { flex: none; background: #eaf2ff; border-radius: 99px; padding: 3px 9px; font-size: 12px; font-weight: 700; color: var(--ink); }
+#questbtn.done { background: var(--green); color: #fff; }
 #tipsbtn { flex: none; background: #eaf2ff; border-radius: 99px; padding: 2px 8px; font-size: 14px; }
 .chev { font-size: 22px; line-height: 0.6; font-weight: 700; flex: none; }
 .quest.done { background: #fff4c2; animation: pulse 1.2s infinite; }
@@ -321,8 +324,20 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .rdots i.on { background: #ef476f; }
 
 /* ---------- computer: show more of the world ---------- */
+/* The game fills the left side and all UI lives in a column on the right. */
 @media (min-width: 720px) {
-  #app { max-width: none; --side: calc(50% - 240px); box-shadow: none; }
+  #app { max-width: none; box-shadow: none; --ui: 440px; }
+  #app::before {
+    content: 'Vælg en fane i menuen nedenfor 👇'; position: absolute; top: 0; right: 0; bottom: 0; width: var(--ui); z-index: 1;
+    display: flex; align-items: center; justify-content: center; color: var(--muted); font-weight: 600; font-size: 14px;
+    background: var(--bg); box-shadow: -6px 0 24px rgba(60, 30, 90, 0.12);
+  }
+  #game, #labels { right: var(--ui); width: calc(100% - var(--ui)); }
+  #hud, #nav, .sheet { left: auto; right: 0; width: var(--ui); }
+  #hud { z-index: 3; }
+  .sheet { height: auto; top: 250px; border-radius: 24px 24px 0 0; }
+  #toasts, #buildbar { left: auto; right: 10px; width: calc(var(--ui) - 20px); }
+  #dropbtn { right: calc(var(--ui) + 12px); }
 }
 
 /* ---------- character creator ---------- */
@@ -349,3 +364,11 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .card-modal.summary { max-width: 360px; max-height: 92%; overflow-y: auto; }
 .card-modal.summary h2 { color: #ef476f; letter-spacing: 1px; }
 .card-modal.summary .ledger { margin: 6px 0 14px; text-align: left; }
+
+/* ---------- employee satisfaction ---------- */
+.happy { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.happy span { font-size: 14px; }
+.happy b { font-size: 11px; color: var(--muted); min-width: 20px; text-align: right; }
+.hbar { flex: 1; height: 7px; background: #ece8f3; border-radius: 99px; overflow: hidden; }
+.hbar i { display: block; height: 100%; border-radius: 99px; }
+.hwhy { color: var(--muted); font-size: 10.5px !important; }

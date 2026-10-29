@@ -7,7 +7,7 @@ import {
   spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, mood,
 } from './state.js';
 import {
-  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult, loanBlock,
+  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult, loanBlock, happiness,
 } from './sim.js';
 import { TILE } from './world.js';
 
@@ -27,6 +27,7 @@ export class UI {
     this.tick = 0;
     this.confirmFire = null;
     this.prodTab = 'mine';
+    this.staffTab = 'team';
     this.build();
     this.bind();
   }
@@ -42,7 +43,7 @@ export class UI {
           <div class="chip"><span class="ci">👥</span><div class="ct"><b id="h-staff"></b><small>Ansatte</small></div></div>
         </div>
         <div class="panel">
-          <div class="dayrow"><b id="h-day"></b><div class="daybar"><i id="h-daybar"></i></div><small id="h-daytxt"></small><button id="tipsbtn" data-act="tips:1" title="Vis tips">💡</button></div>
+          <div class="dayrow"><b id="h-day"></b><div class="daybar"><i id="h-daybar"></i></div><small id="h-daytxt"></small><button id="questbtn" data-act="qmin:0" title="Vis mål"></button><button id="tipsbtn" data-act="tips:1" title="Vis tips">💡</button></div>
           <button id="quest" class="quest"></button>
           <button id="advisor" class="advisor"></button>
         </div>
@@ -104,6 +105,8 @@ export class UI {
       this.toast('Ikke nok penge 💸', 'bad');
     }
     if (cmd === 'ptab') this.prodTab = x;
+    if (cmd === 'stab') this.staffTab = x;
+    if (cmd === 'qmin') s.hideQuest = x === '1';
     if (cmd === 'tips') s.hideTips = x === '0';
     if (cmd === 'shelfOnly') {
       const f = s.furniture.find((o) => o.id === +x);
@@ -250,11 +253,19 @@ export class UI {
 
     const qs = this.quest();
     const qEl = $('#quest');
-    qEl.innerHTML = qs
+    const qh = (qs
       ? `<span class="qi">🎯</span><b class="qt">${qs.q.text}</b>
          ${qs.done ? `<span class="btn claim">Hent ${rewardText(qs.q.reward)}</span>` : `<small>${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}</small>${qs.q.tab ? '<span class="chev">›</span>' : ''}`}`
-      : `<span class="qi">🏆</span><b class="qt">Alle mål klaret – flere kommer snart!</b>`;
+      : `<span class="qi">🏆</span><b class="qt">Alle mål klaret – flere kommer snart!</b>`) + '<span class="hide" data-act="qmin:1" title="Minimér">–</span>';
+    if (qh !== this.questHtml) { this.questHtml = qh; qEl.innerHTML = qh; }
     qEl.classList.toggle('done', !!qs?.done);
+    // Minimised: just a small 🎯 chip in the day row (green when there's a reward to collect).
+    qEl.hidden = s.hideQuest;
+    const qb = $('#questbtn');
+    qb.hidden = !s.hideQuest;
+    const qbt = qs ? (qs.done ? '🎯 Hent!' : `🎯 ${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}`) : '🏆';
+    if (qb.textContent !== qbt) qb.textContent = qbt;
+    qb.classList.toggle('done', !!qs?.done);
     qEl.dataset.act = qs?.done ? 'claim' : `advisor:${qs?.q.tab || ''}`;
 
     const adv = advisor(s);
@@ -292,6 +303,7 @@ export class UI {
           <small class="eff">${this.effectText(e)}</small>
           ${e.special ? `<small class="special">✨ ${e.specialDesc}</small>` : ''}
           ${R.desk && e.desk == null ? '<small class="warn">⚠️ Mangler skrivebord</small>' : ''}
+          ${this.happyBar(e)}
         </div>
         <div class="btns">
           ${up != null ? `<button class="btn" data-act="upEmp:${e.id}" ${s.money < up ? 'disabled' : ''}>⬆ ${EMP_TIERS[e.tier + 1].name}<small>${kr(up)}</small></button>` : '<span class="tag gold">MAX</span>'}
@@ -309,8 +321,18 @@ export class UI {
         <div class="btns"><button class="btn" data-act="hire:${c.cid}" ${s.money < c.cost ? 'disabled' : ''}>Ansæt<small>${kr(c.cost)}</small></button></div></div>`;
     }).join('');
     const locked = Object.values(ROLES).filter((r) => r.lvl > s.level).map((r) => `<div class="locked">🔒 ${r.icon} ${r.name} · Level ${r.lvl}</div>`).join('');
-    return `<h3>Dit team (${s.employees.length})</h3><p class="tip">😊 Trivsel: <b>+${Math.round(mood(s) * 100)} %</b> arbejdstempo – køb planter, sofa og hygge under Upgrades.</p>${team}
-      <h3>Kandidater <small>· nye hver dag</small></h3>${cands || '<p class="empty">Ingen kandidater endnu – nå level 2 for at kunne ansætte.</p>'}${locked}`;
+    const hireTab = this.staffTab === 'hire';
+    const tabs = `<div class="seg subtabs"><button class="${hireTab ? '' : 'on'}" data-act="stab:team">👥 Personale (${s.employees.length})</button><button class="${hireTab ? 'on' : ''}" data-act="stab:hire">🤝 Ansæt (${s.candidates.length})</button></div>`;
+    return tabs + (hireTab
+      ? `<p class="tip">Nye kandidater hver dag.</p>${cands || '<p class="empty">Ingen kandidater endnu – nå level 2 for at kunne ansætte.</p>'}${locked}`
+      : `<p class="tip">😊 Trivsel: <b>+${Math.round(mood(s) * 100)} %</b> arbejdstempo – køb planter, sofa og hygge under Upgrades.</p>${team.replace('Ansæt dit første teammedlem herunder!', 'Ansæt dit første teammedlem under 🤝 Ansæt.')}`);
+  }
+
+  // Satisfaction bar going from red (unhappy) to green (happy), with the reasons underneath.
+  happyBar(e) {
+    const { v, why } = happiness(this.s, e), face = v >= 70 ? '😄' : v >= 45 ? '🙂' : v >= 25 ? '😐' : '😟';
+    return `<div class="happy"><span>${face}</span><div class="hbar"><i style="width:${v}%;background:hsl(${Math.round(v * 1.2)},70%,50%)"></i></div><b>${v}</b></div>
+      ${why.length ? `<small class="hwhy">${why.join(' · ')}</small>` : ''}`;
   }
 
   effectText(e) {
