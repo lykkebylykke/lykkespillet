@@ -1,12 +1,14 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
   spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, mood,
 } from './state.js';
-import { effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate } from './sim.js';
+import {
+  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult,
+} from './sim.js';
 
 const TABS = [
   ['home', '🏠', 'Hjem'], ['staff', '👥', 'Ansatte'], ['orders', '🧾', 'Ordrer'], ['products', '👕', 'Produkter'],
@@ -60,7 +62,9 @@ export class UI {
       if (!b || b.disabled) return;
       this.act(b.dataset.act);
     });
-    bus.on('toast', (t, cls) => this.toast(t, cls));
+    bus.on('toast', (t, cls, ms) => this.toast(t, cls, ms));
+    bus.on('bankrupt', () => this.bankrupt());
+    if (s.bankrupt) this.bankrupt();
     bus.on('levelup', (l) => this.levelUp(l));
     bus.on('dayEnd', (r) => this.toast(dayReport(r), 'day', 5000));
     bus.on('ship', (rev, pos) => { this.w.popup(`+${fmt(rev)} kr`, pos, 'money'); bus.emit('sfx', 'coin'); });
@@ -100,6 +104,9 @@ export class UI {
     if (cmd === 'ptab') this.prodTab = x;
     if (cmd === 'advisor' && x) this.open(x);
     if (cmd === 'closeModal') $('#modal').classList.remove('show');
+    if (cmd === 'loan') { if (takeLoan(s, x)) { this.toast(`🏦 ${kr(s.loan.amount)} er sat ind på kontoen`, 'good'); bus.emit('sfx', 'coin'); } }
+    if (cmd === 'repay') { if (!repayLoan(s)) this.toast('Ikke nok penge til at indfri lånet 💸', 'bad'); else this.toast('✅ Lånet er indfriet', 'good'); }
+    if (cmd === 'restart') resetState();
     if (cmd === 'reset') { if (this.confirmReset) resetState(); else this.confirmReset = true; }
     this.renderSheet(true);
   }
@@ -153,6 +160,18 @@ export class UI {
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, ms);
   }
 
+  bankrupt() {
+    const s = this.s;
+    const days = s.day - 1;
+    $('#toasts').innerHTML = '';
+    $('#modal').innerHTML = `<div class="card-modal">
+      <div class="burst">💸</div><h2>Konkurs!</h2>
+      <p>Webshoppen havde underskud ${BANKRUPT_DAYS} dage i træk, og banken har lukket butikken.</p>
+      <h4>Din rejse</h4><ul><li>${days} ${days === 1 ? 'dag' : 'dage'} i drift</li><li>Level ${s.level}</li><li>${fmt(s.stats.shipped)} pakker sendt</li><li>${kr(s.stats.revenue)} i omsætning</li></ul>
+      <button class="btn big" data-act="restart">Start en ny webshop</button></div>`;
+    $('#modal').classList.add('show');
+  }
+
   levelUp(l) {
     bus.emit('sfx', 'fanfare');
     const un = unlocksAt(l);
@@ -180,7 +199,8 @@ export class UI {
     $('#h-xptxt').textContent = s.level >= MAX_LEVEL ? 'MAX' : `${fmt(s.xp)}/${fmt(xpFor(s.level))} XP`;
     $('#h-gems').textContent = s.gems;
     $('#h-staff').textContent = s.employees.length;
-    $('#h-day').textContent = `Dag ${s.day}`;
+    const dh = `Dag ${s.day}${s.redDays ? ` <span class="red">⚠️ ${s.redDays}/${BANKRUPT_DAYS}</span>` : ''}`;
+    if (dh !== this.dayHtml) { this.dayHtml = dh; $('#h-day').innerHTML = dh; }
     $('#h-daybar').style.width = `${(s.dayTime / DAY_LENGTH) * 100}%`;
     const left = Math.max(0, Math.ceil(DAY_LENGTH - s.dayTime));
     $('#h-daytxt').textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
@@ -378,6 +398,35 @@ export class UI {
       }).join('');
   }
 
+  // How close the shop is to bankruptcy.
+  r_risk() {
+    const s = this.s, today = dayResult(s.stats.today), n = s.redDays;
+    const dots = Array.from({ length: BANKRUPT_DAYS }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
+    return `<div class="risk ${n >= 4 ? 'hot' : ''}">
+      <div><b>${n ? `⚠️ Underskud ${n} ${n === 1 ? 'dag' : 'dage'} i træk` : '✅ Ingen underskudsdage'}</b><div class="rdots">${dots}</div></div>
+      <small>Har du underskud (eller negativ saldo) ${BANKRUPT_DAYS} dage i træk, går du konkurs. Køb af møbler og upgrades tæller ikke som underskud.
+      I dag indtil videre: ${today >= 0 ? '+' : ''}${kr(today)}</small></div>`;
+  }
+
+  r_loans() {
+    const s = this.s, l = s.loan;
+    if (l) {
+      const r = loanRate(l);
+      return `<h3>🏦 Lån</h3><div class="card"><div class="av">${l.icon}</div>
+        <div class="info"><b>${l.name} · ${kr(l.amount)}</b><small>Restgæld ${kr(l.principal + l.interest)} · ${l.left} ${l.left === 1 ? 'dag' : 'dage'} tilbage</small>
+          <small class="eff">Afdrag ${kr(r.principal + r.interest)}/dag (heraf renter ${kr(r.interest)})</small></div>
+        <div class="btns"><button class="btn ghost" data-act="repay" ${s.money < loanPayoff(l) ? 'disabled' : ''}>Indfri<small>${kr(loanPayoff(l))}</small></button></div></div>`;
+    }
+    return `<h3>🏦 Lån</h3><p class="tip">Lån penge til at vokse hurtigere. Lånet betales tilbage med renter hver aften. Du kan have ét lån ad gangen.</p>` +
+      LOANS.map((L) => {
+        const interest = Math.round(L.amount * L.rate), per = Math.round((L.amount + interest) / L.days);
+        return `<div class="card"><div class="av">${L.icon}</div>
+          <div class="info"><b>${L.name} · ${kr(L.amount)}</b><small>${Math.round(L.rate * 100)} % rente (${kr(interest)}) · ${L.days} dage</small>
+            <small class="eff">Afdrag ca. ${kr(per)}/dag</small></div>
+          <div class="btns">${s.level < L.lvl ? `<span class="tag">🔒 Lvl ${L.lvl}</span>` : `<button class="btn" data-act="loan:${L.id}">Lån</button>`}</div></div>`;
+      }).join('');
+  }
+
   r_stats() {
     const s = this.s, fx = effects(s), h = s.stats.history, td = s.stats.today, st = s.stats;
     const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
@@ -402,12 +451,15 @@ export class UI {
         ${lines}
         <tr class="sum"><td>Resultat</td><td>${res(td.revenue - td.costs)}</td><td>${res(st.revenue - totalExp)}</td></tr>
       </table>
+      ${this.r_risk()}
+      ${this.r_loans()}
       <h3>Faste udgifter</h3>
       <div class="breakdown">
         <small>🏠 Husleje: <b>${kr(rentOf(s))}/dag</b> – stiger når du bygger reoler, pakkeborde og skriveborde</small>
         <small>👥 Løn: <b>${kr(wages)}/dag</b> (${s.employees.length} ansatte)</small>
         <small>🎁 Emballage: <b>${kr(PACKAGING)}</b> og 🚚 fragt: <b>${kr(FREIGHT)}</b> pr. pakke</small>
-        <small>Husleje og løn trækkes når dagen slutter.</small>
+        ${s.loan ? `<small>🏦 Afdrag på lån: <b>${kr(loanRate(s.loan).principal + loanRate(s.loan).interest)}/dag</b> (heraf renter ${kr(loanRate(s.loan).interest)})</small>` : ''}
+        <small>Husleje, løn og afdrag trækkes når dagen slutter.</small>
       </div>
       <h3>Resultat pr. dag</h3>${bars}
       <h3>Nøgletal</h3>

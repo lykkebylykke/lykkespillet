@@ -36,6 +36,7 @@ export function newState() {
     employees: [], candidates: [],
     boosts: [], trend: null, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
     satisfaction: 80, parcels: 0,
+    loan: null, redDays: 0, bankrupt: false,
     player: { x: 14, z: 7, carry: null },
     quest: 0,
     recentLost: [],

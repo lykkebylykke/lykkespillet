@@ -1,5 +1,5 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, PLAYER_NAME,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, productById, TABLE_SLOTS, PLAYER_NAME,
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
@@ -80,11 +80,53 @@ function spawnOrder(s) {
   bus.emit('order', p);
 }
 
+// ---------- loans ----------
+export function takeLoan(s, id) {
+  const L = LOANS.find((l) => l.id === id);
+  if (!L || s.loan || s.level < L.lvl) return false;
+  const interest = Math.round(L.amount * L.rate);
+  s.loan = { id, name: L.name, icon: L.icon, amount: L.amount, principal: L.amount, interest, left: L.days, days: L.days };
+  s.money += L.amount;
+  bus.emit('money', L.amount);
+  return true;
+}
+// Today's installment: an equal share of what's left of principal and interest.
+export const loanRate = (l) => ({ principal: Math.round(l.principal / l.left), interest: Math.round(l.interest / l.left) });
+// Paying off early saves the interest of the remaining days (except today's).
+export const loanPayoff = (l) => l.principal + loanRate(l).interest;
+
+export function repayLoan(s) {
+  const l = s.loan;
+  if (!l || s.money < loanPayoff(l)) return false;
+  s.money -= l.principal;
+  charge(s, loanRate(l).interest, 'interest');
+  s.loan = null;
+  return true;
+}
+
+function payLoan(s) {
+  const l = s.loan;
+  if (!l) return;
+  const r = loanRate(l);
+  s.money -= r.principal;
+  charge(s, r.interest, 'interest');
+  l.principal -= r.principal;
+  l.interest -= r.interest;
+  if (--l.left <= 0) { s.loan = null; bus.emit('toast', `🎉 ${l.name} er betalt tilbage!`, 'good'); }
+}
+
+// Operating result: building and upgrades are investments, so they don't count as a deficit.
+export const dayResult = (t) => t.revenue - t.costs + (t.exp.invest || 0);
+
 function endDay(s) {
   const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
   charge(s, wages, 'staff');
   charge(s, rentOf(s), 'rent');
+  payLoan(s);
   const t = s.stats.today;
+  s.redDays = dayResult(t) < 0 || s.money < 0 ? s.redDays + 1 : 0;
+  if (s.redDays >= BANKRUPT_DAYS) s.bankrupt = true;
+  else if (s.redDays >= 2) bus.emit('toast', `⚠️ Underskud ${s.redDays} dage i træk – efter ${BANKRUPT_DAYS} går du konkurs!`, 'bad', 6000);
   s.stats.history.push({ day: s.day, ...t, wages });
   if (s.stats.history.length > 7) s.stats.history.shift();
   bus.emit('dayEnd', { day: s.day, ...t, wages });
@@ -92,6 +134,7 @@ function endDay(s) {
   s.day++;
   s.dayTime = 0;
   refreshCandidates(s);
+  if (s.bankrupt) bus.emit('bankrupt');
 }
 
 function randomEvent(s) {
@@ -120,6 +163,7 @@ function randomEvent(s) {
 }
 
 export function update(s, dt) {
+  if (s.bankrupt) return;
   s.time += dt;
   s.dayTime += dt;
   if (s.dayTime >= DAY_LENGTH) endDay(s);
@@ -200,6 +244,7 @@ export function advisor(s) {
   const kit = Object.values(s.kit).reduce((a, b) => a + b, 0);
   if (kit) return { text: `${kit} ${kit === 1 ? 'møbel venter' : 'møbler venter'} på at blive placeret → tryk 📦 Placér`, tab: null };
   if (!listed(s).length) return { text: 'Pak kassen ud og læg varerne på reolen for at åbne webshoppen', tab: null };
+  if (s.redDays >= 2) return { text: `Underskud ${s.redDays} dage i træk – ${BANKRUPT_DAYS - s.redDays} dage til konkurs! → se Økonomi`, tab: 'stats' };
   if (s.money < 0) return { text: 'Negativ saldo! Sælg mere eller skær ned på lønudgifter', tab: 'staff' };
   if (deskless) return { text: `${deskless.name} mangler et skrivebord → køb et under Indretning`, tab: 'upgrades' };
   if (activeCampaign(s) && q >= 3) return { text: `${s.campaign.icon} Kampagne! Ordrerne vælter ind – løb, ${PLAYER_NAME}! 🏃‍♀️`, tab: null };

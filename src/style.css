@@ -30,6 +30,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
   width: 100%;
   max-width: 480px;
   height: 100dvh;
+  --side: 0px; /* on wide screens the game fills the window and the UI stays a phone-width column */
   margin: 0 auto;
   overflow: hidden;
   background: #bde3f7;
@@ -86,7 +87,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 
 /* ---------- HUD ---------- */
 #hud {
-  position: absolute; left: 0; right: 0; top: 0; padding: calc(env(safe-area-inset-top) + 8px) 10px 0;
+  position: absolute; left: var(--side); right: var(--side); top: 0; padding: calc(env(safe-area-inset-top) + 8px) 10px 0;
   pointer-events: none; display: flex; flex-direction: column; gap: 5px;
 }
 #hud button { pointer-events: auto; }
@@ -151,7 +152,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 
 /* ---------- nav ---------- */
 #nav {
-  position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--nav-h) + env(safe-area-inset-bottom));
+  position: absolute; left: var(--side); right: var(--side); bottom: 0; height: calc(var(--nav-h) + env(safe-area-inset-bottom));
   padding: 6px 6px env(safe-area-inset-bottom); background: #fff; display: grid; grid-template-columns: repeat(7, 1fr);
   border-radius: 22px 22px 0 0; box-shadow: 0 -4px 18px rgba(60, 30, 90, 0.14); z-index: 5;
 }
@@ -164,7 +165,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 
 /* ---------- sheet ---------- */
 .sheet {
-  position: absolute; left: 0; right: 0; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) - 20px); height: 70%;
+  position: absolute; left: var(--side); right: var(--side); bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) - 20px); height: 70%;
   background: var(--bg); border-radius: 24px 24px 0 0; box-shadow: 0 -8px 30px rgba(60, 30, 90, 0.2);
   transform: translateY(115%); transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1); display: flex; flex-direction: column; z-index: 4;
 }
@@ -232,7 +233,7 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 .bar span { font-size: 10px; font-weight: 600; }
 
 /* ---------- toasts + modal ---------- */
-#toasts { position: absolute; left: 10px; right: 10px; bottom: calc(var(--nav-h) + 14px); display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 6; }
+#toasts { position: absolute; left: calc(var(--side) + 10px); right: calc(var(--side) + 10px); bottom: calc(var(--nav-h) + 14px); display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 6; }
 .toast {
   background: rgba(45, 42, 74, 0.92); color: #fff; border-radius: 14px; padding: 8px 12px; font-size: 13px; font-weight: 500;
   box-shadow: var(--shadow); animation: tin 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.3);
@@ -286,11 +287,11 @@ body.building #toasts { bottom: calc(env(safe-area-inset-bottom) + 130px); }
 .fab.kit { background: var(--pink); color: #fff; animation: pulse 1.2s infinite; }
 .fab.kit b { display: inline-grid; place-items: center; min-width: 20px; height: 20px; border-radius: 99px; background: #fff; color: var(--pink); font-size: 12px; margin-left: 4px; }
 #buildbar {
-  position: absolute; left: 10px; right: 10px; bottom: calc(env(safe-area-inset-bottom) + 12px); z-index: 5;
+  position: absolute; left: calc(var(--side) + 10px); right: calc(var(--side) + 10px); bottom: calc(env(safe-area-inset-bottom) + 12px); z-index: 5;
   background: #fff; border-radius: 20px; padding: 10px 12px 12px; box-shadow: 0 -4px 24px rgba(60, 30, 90, 0.22);
 }
 #buildbar[hidden], #buildfab[hidden], .fab[hidden] { display: none; }
-#dropbtn { position: absolute; right: 12px; bottom: calc(var(--nav-h) + 14px); z-index: 7; }
+#dropbtn { position: absolute; right: calc(var(--side) + 12px); bottom: calc(var(--nav-h) + 14px); z-index: 7; }
 body.building #dropbtn { display: none; }
 .bmsg { font-size: 13px; color: var(--muted); margin: 0 2px 9px; }
 .bmsg b { color: var(--ink); }
@@ -300,3 +301,18 @@ body.building #dropbtn { display: none; }
 .bbtns .btn.ok { flex: 1.6; background: var(--green); box-shadow: 0 3px 0 #1e8c57; }
 body.building #nav, body.building #hud .panel, body.building #boosts, body.building #labels { display: none; }
 .bbtns .btn.ok:disabled { background: #d9d4e3; box-shadow: 0 3px 0 #bcb6c9; }
+
+/* ---------- bankruptcy risk ---------- */
+.dayrow .red { color: #ef476f; font-size: 12px; white-space: nowrap; }
+.risk { background: #fff; border-radius: 16px; padding: 10px 12px; margin-top: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
+.risk > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.risk small { color: var(--muted); line-height: 1.35; }
+.risk.hot { background: #ffe3e8; }
+.rdots { display: flex; gap: 4px; }
+.rdots i { width: 12px; height: 12px; border-radius: 50%; background: #e3dfee; }
+.rdots i.on { background: #ef476f; }
+
+/* ---------- computer: show more of the world ---------- */
+@media (min-width: 720px) {
+  #app { max-width: none; --side: calc(50% - 240px); box-shadow: none; }
+}

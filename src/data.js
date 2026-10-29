@@ -9,8 +9,16 @@ export const FREIGHT = 15; // kr per parcel
 export const rentOf = (s) => 100 + 40 * (s.shelves - 1) + 80 * (s.tables - 1) + 50 * (s.desks - 1);
 export const EXPENSES = {
   goods: '📦 Varekøb', staff: '👥 Løn', rent: '🏠 Husleje', packaging: '🎁 Emballage', freight: '🚚 Fragt',
-  hiring: '🤝 Rekruttering & oplæring', invest: '🏗️ Byggeri & upgrades', marketing: '📣 Annoncer & boosts',
+  hiring: '🤝 Rekruttering & oplæring', invest: '🏗️ Byggeri & upgrades', marketing: '📣 Annoncer & boosts', interest: '🏦 Renter',
 };
+// Bank loans: paid back in equal daily installments (principal + interest) when each day ends.
+export const LOANS = [
+  { id: 'small', name: 'Iværksætterlån', icon: '🌱', amount: 5000, rate: 0.08, days: 7, lvl: 1 },
+  { id: 'mid', name: 'Vækstlån', icon: '📈', amount: 20000, rate: 0.12, days: 10, lvl: 3 },
+  { id: 'big', name: 'Erhvervslån', icon: '🏦', amount: 60000, rate: 0.18, days: 14, lvl: 6 },
+];
+// Days in a row with a deficit (or a negative balance) before the shop goes bankrupt.
+export const BANKRUPT_DAYS = 7;
 export const MAX_LEVEL = 20;
 export const xpFor = (l) => Math.round(80 * Math.pow(l, 1.55));
 
