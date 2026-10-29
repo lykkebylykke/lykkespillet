@@ -3,7 +3,11 @@ import {
   UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS,
 } from './data.js';
 
-const SAVE_KEY = 'lykkespillet-v1';
+// Logged-in players get their own key (see cloud.js); guests use the plain one.
+export let SAVE_KEY = 'lykkespillet-v1';
+export const setSaveKey = (k) => { SAVE_KEY = k; };
+let resetHook = null;
+export const setResetHook = (f) => { resetHook = f; };
 
 export const bus = {
   l: {},
@@ -112,7 +116,7 @@ export function saveState(s) {
 export function resetState() {
   resetting = true;
   try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
-  location.reload();
+  Promise.resolve(resetHook?.()).catch(() => {}).finally(() => location.reload());
 }
 
 // ---------- derived values ----------
@@ -130,8 +134,6 @@ export function syncFurniture(s) {
   for (const [type, F] of Object.entries(FURNITURE)) if (F.key) s[F.key] = s.furniture.filter((f) => f.type === type).length;
 }
 export const ownedFurniture = (s, type) => s.furniture.filter((f) => f.type === type).length + (s.kit[type] || 0);
-// Decor makes the team happier: +x % work speed for employees.
-export const mood = (s) => s.furniture.reduce((a, f) => a + (FURNITURE[f.type].mood || 0), 0);
 export const freeBoxSlot = (s) => {
   const used = new Set(s.boxes.map((b) => b.slot));
   return BOX_SLOTS.findIndex((_, i) => !used.has(i));

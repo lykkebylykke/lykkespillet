@@ -106,12 +106,12 @@ export const FURNITURE = {
   shelf: { name: 'Lagerreol', icon: '🧱', key: 'shelves', cost: SHELF_COST, lvl: SHELF_LVL, slots: SHELF_SLOTS, hx: 1.35, hz: 0.4, acc: 0.85, r: 0.85 },
   table: { name: 'Pakkebord', icon: '📦', key: 'tables', cost: TABLE_COST, lvl: TABLE_LVL, slots: TABLE_SLOTS, hx: 1.05, hz: 0.55, acc: 0.95, r: 0.85 },
   desk: { name: 'Skrivebord', icon: '🖥️', key: 'desks', cost: DESK_COST, lvl: DESK_LVL, slots: DESK_SLOTS, hx: 0.85, hz: 0.45, acc: 0.9, r: 0.8 },
-  // Decor has no work spot; each placed piece makes the whole team work a bit faster (mood).
-  plant: { name: 'Plante', icon: '🪴', decor: true, mood: 0.02, cost: [250, 250, 350, 350, 500, 500], lvl: [1, 1, 2, 2, 3, 3], hx: 0.3, hz: 0.3, acc: 0 },
-  coffee: { name: 'Kaffebar', icon: '☕', decor: true, mood: 0.06, cost: [1200], lvl: [2], hx: 0.6, hz: 0.35, acc: 0 },
-  sofa: { name: 'Sofa', icon: '🛋️', decor: true, mood: 0.05, cost: [1500, 2500], lvl: [3, 6], hx: 1.0, hz: 0.45, acc: 0 },
-  speaker: { name: 'Højttaler', icon: '🎵', decor: true, mood: 0.03, cost: [800], lvl: [4], hx: 0.3, hz: 0.3, acc: 0 },
-  foosball: { name: 'Bordfodbold', icon: '⚽', decor: true, mood: 0.08, cost: [3500], lvl: [5], hx: 0.75, hz: 0.45, acc: 0 },
+  // Decor has no work spot; it makes employees working nearby happier (joy points), and happy people work faster.
+  plant: { name: 'Plante', icon: '🪴', decor: true, joy: 4, cost: [250, 250, 350, 350, 500, 500], lvl: [1, 1, 2, 2, 3, 3], hx: 0.3, hz: 0.3, acc: 0 },
+  coffee: { name: 'Kaffebar', icon: '☕', decor: true, joy: 8, cost: [1200], lvl: [2], hx: 0.6, hz: 0.35, acc: 0 },
+  sofa: { name: 'Sofa', icon: '🛋️', decor: true, joy: 6, cost: [1500, 2500], lvl: [3, 6], hx: 1.0, hz: 0.45, acc: 0 },
+  speaker: { name: 'Højttaler', icon: '🎵', decor: true, joy: 7, cost: [800], lvl: [4], hx: 0.3, hz: 0.3, acc: 0 },
+  foosball: { name: 'Bordfodbold', icon: '⚽', decor: true, joy: 8, cost: [3500], lvl: [5], hx: 0.75, hz: 0.45, acc: 0 },
 };
 export const BOX_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 11.8 + (i % 4) * 1.3, z: 2.2 + Math.floor(i / 4) * 1.3 }));
 export const DELIVERY_SPOT = { x: 13.75, z: 5.0 };

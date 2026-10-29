@@ -260,7 +260,7 @@ export class Builder {
     } else if (placing) {
       const F = FURNITURE[this.p.type];
       $('#buildbar .bmsg').innerHTML = this.ok
-        ? `<b>${F.icon} ${F.name}</b> · Træk for at flytte · ${F.decor ? `😊 +${Math.round(F.mood * 100)} % arbejdstempo` : '🟢 = hvor man står'}`
+        ? `<b>${F.icon} ${F.name}</b> · Træk for at flytte · ${F.decor ? `😊 +${F.joy} glæde for ansatte tæt på` : '🟢 = hvor man står'}`
         : `<b>${F.icon} ${F.name}</b> · <span class="bad">${this.why}</span>`;
       $('#buildbar .bbtns').innerHTML = `<button class="btn ghost" data-b="cancel">✕</button><button class="btn ghost" data-b="rotate">↻ Drej</button>
         <button class="btn ok" data-b="confirm" ${this.ok ? '' : 'disabled'}>✓ Placér</button>`;

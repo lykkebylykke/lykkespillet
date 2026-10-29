@@ -372,3 +372,14 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .hbar { flex: 1; height: 7px; background: #ece8f3; border-radius: 99px; overflow: hidden; }
 .hbar i { display: block; height: 100%; border-radius: 99px; }
 .hwhy { color: var(--muted); font-size: 10.5px !important; }
+.htips { display: flex; flex-direction: column; gap: 1px; margin-top: 3px; padding: 5px 8px; background: #fff7e6; border-radius: 10px; }
+.htips small { font-size: 11px !important; color: #8a5a00; }
+
+/* ---------- login ---------- */
+#login { position: absolute; inset: 0; z-index: 13; display: grid; place-items: center; padding: 16px; background: linear-gradient(160deg, #ffd6e5, #bde3f7); }
+#login .cr-card { max-width: 360px; }
+.lg-logo { font-size: 46px; text-align: center; }
+.lg-err { color: #ef476f; font-weight: 600; font-size: 13px; text-align: center; margin: 4px 0 8px; }
+.lg-switch { display: block; margin: 12px auto 0; background: none; color: var(--pink); font-weight: 700; font-size: 13px; }
+#login .btn.big { margin-top: 8px; }
+.tip.acct { margin-top: 14px; }

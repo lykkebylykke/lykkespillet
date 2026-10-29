@@ -3,8 +3,9 @@ import { mat, rbox, at, makeBox } from './world.js';
 import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, productById, bossLook } from './data.js';
 import {
   bus, upgVal, shelfAccepts, shelfHasOrder, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
-  addBoost, addXP, activeCampaign, mood,
+  addBoost, addXP, activeCampaign,
 } from './state.js';
+import { empEff } from './sim.js';
 
 const PLAYER_PACK = 1.6, EMP_PACK = 2.2;
 // Shown behind the character creator before a boss exists.
@@ -354,7 +355,7 @@ class Worker {
     this.task = this.loop();
   }
 
-  get mult() { return EMP_TIERS[this.d.tier].mult * (this.d.special === 'fast' ? 1.5 : 1) * (1 + mood(this.s)); }
+  get mult() { return EMP_TIERS[this.d.tier].mult * (this.d.special === 'fast' ? 1.5 : 1) * empEff(this.s, this.d); }
 
   *wait(sec) { let t = sec; while (t > 0) { t -= this.dt; yield; } }
 
@@ -435,9 +436,9 @@ class Worker {
       this.status = '';
       w.tableRes[t] = this.d.id;
       this.table = t;
-      const tb = w.tables[t];
-      yield* this.walkTo(tb.ax, tb.az);
-      yield* this.face(tb.fx, tb.fz);
+      const tb = w.tables[t], sp = w.spotOf(tb, this.pos.x, this.pos.z);
+      yield* this.walkTo(sp.ax, sp.az);
+      yield* this.face(sp.fx, sp.fz);
       while (this.items.length) {
         this.working = true;
         let left = (EMP_PACK * upgVal(s, 'packTable')) / this.mult;

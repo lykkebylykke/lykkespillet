@@ -415,16 +415,16 @@ export class World {
       const fp = footprint(f.type, f.x, f.z, f.rot);
       if (!list) { this.obstacles.push(fp.box); continue; }
       if (f.type === 'shelf' && f.only) g.add(this.shelfSign(f.only));
-      list.push({ i, id: f.id, f, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, spots: [{ ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz }], ...parts });
+      list.push({ i, id: f.id, f, type: f.type, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, spots: [{ ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz }], ...parts });
       this.obstacles.push(fp.box);
       this.zones.push({ type: f.type, idx: i, x: fp.ax, z: fp.az, r: FURNITURE[f.type].r });
     }
-    // Shelves can also be used from the back when there's room to stand there.
-    for (const sh of this.shelves) {
-      const bx = 2 * sh.x - sh.ax, bz = 2 * sh.z - sh.az;
+    // Shelves and packing tables can also be used from the back when there's room to stand there.
+    for (const st of [...this.shelves, ...this.tables]) {
+      const bx = 2 * st.x - st.ax, bz = 2 * st.z - st.az;
       if (!this.isFloor(bx, bz) || this.obstacles.some((o) => inside(o, bx, bz, 0.3))) continue;
-      sh.spots.push({ ax: bx, az: bz, fx: -sh.fx, fz: -sh.fz });
-      this.zones.push({ type: 'shelf', idx: sh.i, x: bx, z: bz, r: FURNITURE.shelf.r });
+      st.spots.push({ ax: bx, az: bz, fx: -st.fx, fz: -st.fz });
+      this.zones.push({ type: st.type, idx: st.i, x: bx, z: bz, r: FURNITURE[st.type].r });
     }
     this.shelfSig = '';
     this.buildGrid();
@@ -639,6 +639,11 @@ export class World {
       }
     }
     return best;
+  }
+
+  // The side of a station closest to (x, z).
+  spotOf(st, x, z) {
+    return st.spots.reduce((a, b) => (Math.hypot(b.ax - x, b.az - z) < Math.hypot(a.ax - x, a.az - z) ? b : a));
   }
 
   nearestTable(x, z) {

@@ -3,16 +3,16 @@ import {
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
-  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP, mood,
+  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP,
 } from './state.js';
 
 export function effects(s) {
-  const comp = upgVal(s, 'computer') * (1 + mood(s));
+  const comp = upgVal(s, 'computer');
   let some = 0, ecom = 0;
   for (const e of s.employees) {
     if (e.desk == null) continue;
-    if (e.role === 'some') some += SOME_BONUS[e.tier] * comp;
-    if (e.role === 'ecom') ecom += ECOM_BONUS[e.tier] * comp * (e.special === 'data' ? 1.5 : 1);
+    if (e.role === 'some') some += SOME_BONUS[e.tier] * comp * empEff(s, e);
+    if (e.role === 'ecom') ecom += ECOM_BONUS[e.tier] * comp * (e.special === 'data' ? 1.5 : 1) * empEff(s, e);
   }
   let bt = 0, bc = 0;
   for (const b of s.boosts) b.kind === 'traffic' ? (bt += b.mult) : (bc += b.mult);
@@ -26,7 +26,7 @@ export function effects(s) {
 
 export const queueCap = (s) => 15 + 5 * s.tables;
 
-export const supportRate = (s, e) => SUPPORT_RATE[e.tier] * (e.special === 'fast' ? 1.5 : 1) * upgVal(s, 'computer') * (1 + mood(s));
+export const supportRate = (s, e) => SUPPORT_RATE[e.tier] * (e.special === 'fast' ? 1.5 : 1) * upgVal(s, 'computer') * empEff(s, e);
 // Each E-commerce Manager makes campaigns run 25 % longer.
 export const campaignDur = (s, c) => Math.round(c.dur * (1 + 0.25 * s.employees.filter((e) => e.role === 'ecom').length));
 
@@ -132,21 +132,59 @@ function stuck(s) {
   return LOANS.every((L) => loanBlock(s, L));
 }
 
-// How happy an employee is (0–100) and why: decor, seniority and a calm, solvent workplace help.
-export function happiness(s, e) {
-  const R = ROLES[e.role], why = [];
-  let v = 45;
-  const m = Math.round(mood(s) * 100);
-  if (m) { v += m; why.push(`🪴 Hyggeligt lager +${m}`); }
-  if (e.tier) { v += 4 * e.tier; why.push(`⬆️ ${EMP_TIERS[e.tier].name} +${4 * e.tier}`); }
-  if (e.special) { v += 5; why.push('✨ Elsker sit job +5'); }
-  if (R.desk && e.desk == null) { v -= 25; why.push('🖥️ Mangler skrivebord −25'); }
-  const busy = e.role === 'packer' ? queuedCount(s) > 8 : e.role === 'stocker' ? s.boxes.length > 4 : e.role === 'support' ? s.tickets > 5 : false;
-  if (busy) { v -= 10; why.push('😰 Travlt −10'); }
-  if (s.money < 0) { v -= 20; why.push('💸 Bekymret for lønnen −20'); }
-  else if (s.redDays >= 3) { v -= 10; why.push('📉 Dårlige tider −10'); }
-  return { v: Math.max(0, Math.min(100, v)), why };
+// ---------- employee happiness ----------
+// Decor counts when it stands within this many metres of where the employee works.
+const NEAR = 7;
+const AREA = { packer: 'lager', stocker: 'lager', some: 'kontor', ecom: 'kontor', support: 'kontor' };
+const happyCache = new Map();
+
+function workSpots(s, e) {
+  const of = (type) => s.furniture.filter((f) => f.type === type);
+  if (ROLES[e.role].desk) { const d = of('desk')[e.desk]; return d ? [d] : []; }
+  return of(e.role === 'packer' ? 'table' : 'shelf');
 }
+
+// How happy an employee is (0–100), what adds or subtracts, and what would help.
+export function happiness(s, e) {
+  const c = happyCache.get(e.id);
+  if (c && c.s === s && Math.abs(s.time - c.t) < 1) return c.res;
+  const R = ROLES[e.role], why = [], tips = [];
+  let v = 45;
+  const add = (n, text) => { v += n; why.push(`${text} ${n > 0 ? '+' : '−'}${Math.abs(n)}`); };
+  if (e.tier) add(4 * e.tier, `⬆️ ${EMP_TIERS[e.tier].name}`);
+  if (e.special) add(5, '✨ Elsker sit job');
+  if (R.desk && e.desk == null) { add(-25, '🖥️ Intet skrivebord'); tips.unshift('🖥️ Køb et skrivebord til mig'); }
+  // Decor near the work spot
+  const spots = workSpots(s, e);
+  const near = (type) => s.furniture.filter((f) => f.type === type && spots.some((p) => Math.hypot(p.x - f.x, p.z - f.z) <= NEAR)).length;
+  const decor = [
+    ['plant', 3, '🪴 Planter', '🪴 Savner lidt grønt – sæt en plante tæt på'],
+    ['speaker', 1, '🎵 Musik', '🎵 Savner musik i området – sæt en højttaler tæt på'],
+    ['coffee', 1, '☕ Kaffe', '☕ Savner en kop kaffe – en kaffebar tæt på'],
+    ['sofa', 2, '🛋️ Pausested', '🛋️ Savner et sted at holde pause – en sofa tæt på'],
+    ['foosball', 1, '⚽ Bordfodbold', '⚽ Et bordfodboldbord ville gøre pauserne sjovere'],
+  ];
+  for (const [type, max, label, tip] of decor) {
+    const n = Math.min(max, near(type));
+    if (n) add(n * FURNITURE[type].joy, label);
+    else if (spots.length && s.level >= FURNITURE[type].lvl[0]) tips.push(tip);
+  }
+  // Colleagues in the same area
+  const mates = s.employees.filter((o) => o !== e && AREA[o.role] === AREA[e.role]).length;
+  if (mates) add(5, '👫 Har kolleger');
+  else { add(-8, '👋 Alene'); tips.unshift(`👋 Savner en kollega på ${AREA[e.role] === 'lager' ? 'lageret' : 'kontoret'} – ansæt en mere`); }
+  // Pressure
+  const busy = e.role === 'packer' ? queuedCount(s) > 8 : e.role === 'stocker' ? s.boxes.length > 4 : e.role === 'support' ? s.tickets > 5 : false;
+  if (busy) { add(-10, '😰 Travlt'); tips.unshift('😰 Der er for travlt – ansæt hjælp eller opgrader'); }
+  if (s.money < 0) { add(-20, '💸 Bekymret for lønnen'); tips.unshift('💸 Få saldoen over 0'); }
+  else if (s.redDays >= 3) add(-10, '📉 Dårlige tider');
+  const res = { v: Math.max(0, Math.min(100, v)), why, tips };
+  happyCache.set(e.id, { s, t: s.time, res });
+  return res;
+}
+// Happiness sets the work pace: 0 → 75 %, 50 → 100 %, 100 → 125 %.
+export const happyEff = (v) => 0.75 + v / 200;
+export const empEff = (s, e) => happyEff(happiness(s, e).v);
 
 // Operating result: building and upgrades are investments, so they don't count as a deficit.
 export const dayResult = (t) => t.revenue - t.costs + (t.exp?.invest || 0);

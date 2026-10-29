@@ -6,6 +6,7 @@ import { Player, Crew } from './actors.js';
 import { UI } from './ui.js';
 import { Builder } from './build.js';
 import { Creator } from './creator.js';
+import { startCloud } from './cloud.js';
 
 // ---------- input: virtual joystick + keyboard ----------
 class Input {
@@ -149,4 +150,5 @@ function boot() {
   addEventListener('pagehide', () => saveState(s));
 }
 
-Promise.race([document.fonts.load('700 40px Fredoka'), new Promise((r) => setTimeout(r, 1500))]).catch(() => {}).finally(boot);
+Promise.race([document.fonts.load('700 40px Fredoka'), new Promise((r) => setTimeout(r, 1500))]).catch(() => {})
+  .then(startCloud).catch(() => null).then(boot);

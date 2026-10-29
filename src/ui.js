@@ -4,12 +4,13 @@ import {
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, mood,
+  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture,
 } from './state.js';
 import {
-  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult, loanBlock, happiness,
+  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, dayResult, loanBlock, happiness, happyEff,
 } from './sim.js';
 import { TILE } from './world.js';
+import { cloud, logout } from './cloud.js';
 
 const TABS = [
   ['home', '🏠', 'Hjem'], ['staff', '👥', 'Ansatte'], ['orders', '🧾', 'Ordrer'], ['products', '👕', 'Produkter'],
@@ -120,6 +121,7 @@ export class UI {
     if (cmd === 'loan') { if (takeLoan(s, x)) { this.toast(`🏦 ${kr(s.loans.at(-1).amount)} er sat ind på kontoen`, 'good'); bus.emit('sfx', 'coin'); } }
     if (cmd === 'repay') { if (!repayLoan(s, x)) this.toast('Ikke nok penge til at indfri lånet 💸', 'bad'); else this.toast('✅ Lånet er indfriet', 'good'); }
     if (cmd === 'restart') resetState();
+    if (cmd === 'logout') { logout(); return; }
     if (cmd === 'reset') { if (this.confirmReset) resetState(); else this.confirmReset = true; }
     this.renderSheet(true);
   }
@@ -325,18 +327,19 @@ export class UI {
     const tabs = `<div class="seg subtabs"><button class="${hireTab ? '' : 'on'}" data-act="stab:team">👥 Personale (${s.employees.length})</button><button class="${hireTab ? 'on' : ''}" data-act="stab:hire">🤝 Ansæt (${s.candidates.length})</button></div>`;
     return tabs + (hireTab
       ? `<p class="tip">Nye kandidater hver dag.</p>${cands || '<p class="empty">Ingen kandidater endnu – nå level 2 for at kunne ansætte.</p>'}${locked}`
-      : `<p class="tip">😊 Trivsel: <b>+${Math.round(mood(s) * 100)} %</b> arbejdstempo – køb planter, sofa og hygge under Upgrades.</p>${team.replace('Ansæt dit første teammedlem herunder!', 'Ansæt dit første teammedlem under 🤝 Ansæt.')}`);
+      : `<p class="tip">😊 <b>Glæde giver tempo:</b> en medarbejder på 0 arbejder i 75 % tempo, på 50 i 100 % og på 100 i 125 %. Pynt tæt på deres arbejdsplads, kolleger i samme område og ro i økonomien gør dem gladere.</p>${team.replace('Ansæt dit første teammedlem herunder!', 'Ansæt dit første teammedlem under 🤝 Ansæt.')}`);
   }
 
   // Satisfaction bar going from red (unhappy) to green (happy), with the reasons underneath.
   happyBar(e) {
-    const { v, why } = happiness(this.s, e), face = v >= 70 ? '😄' : v >= 45 ? '🙂' : v >= 25 ? '😐' : '😟';
+    const { v, why, tips } = happiness(this.s, e), face = v >= 70 ? '😄' : v >= 45 ? '🙂' : v >= 25 ? '😐' : '😟';
     return `<div class="happy"><span>${face}</span><div class="hbar"><i style="width:${v}%;background:hsl(${Math.round(v * 1.2)},70%,50%)"></i></div><b>${v}</b></div>
-      ${why.length ? `<small class="hwhy">${why.join(' · ')}</small>` : ''}`;
+      <small class="hwhy">⚡ Arbejdstempo <b>${Math.round(happyEff(v) * 100)} %</b>${why.length ? ` · ${why.join(' · ')}` : ''}</small>
+      ${tips.length ? `<div class="htips">${tips.slice(0, 3).map((t) => `<small>💭 ${t}</small>`).join('')}</div>` : ''}`;
   }
 
   effectText(e) {
-    const s = this.s, m = EMP_TIERS[e.tier].mult * (e.special === 'fast' ? 1.5 : 1), comp = upgVal(s, 'computer');
+    const s = this.s, eff = happyEff(happiness(s, e).v), m = EMP_TIERS[e.tier].mult * (e.special === 'fast' ? 1.5 : 1) * eff, comp = upgVal(s, 'computer') * eff;
     if (e.role === 'packer') return `📦 ${((2.2 * upgVal(s, 'packTable')) / m).toFixed(1)} s pr. ordre · bærer ${e.tier >= 3 ? 3 : e.tier >= 1 ? 2 : 1}`;
     if (e.role === 'stocker') return `🛒 ${(4 * m).toFixed(1)} varer/sek`;
     if (e.role === 'support') return `🎧 ${(supportRate(s, e) * 60).toFixed(0)} henvendelser/min`;
@@ -442,7 +445,7 @@ export class UI {
     const s = this.s;
     const card = ([type, F]) => {
       const n = ownedFurniture(s, type), max = F.cost.length, cost = F.cost[n], lvl = F.lvl[n];
-      const eff = F.decor ? `<small class="eff">😊 +${Math.round(F.mood * 100)} % arbejdstempo pr. stk.</small>` : '';
+      const eff = F.decor ? `<small class="eff">😊 +${F.joy} glæde for ansatte tæt på (ca. 7 m)</small>` : '';
       return `<div class="card"><div class="av">${F.icon}</div>
         <div class="info"><b>${F.name}</b><small>Du har ${n} af ${max}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small>${eff}</div>
         <div class="btns">${n >= max ? '<span class="tag gold">MAX</span>'
@@ -455,7 +458,7 @@ export class UI {
         <div class="info"><b>Mere plads</b><small>Lageret er ${fmt(90 + s.tiles.length)} felter · ${fmt((90 + s.tiles.length) * TILE * TILE)} m²</small>
           <small class="eff">${kr(TILE_COST)} pr. felt (${TILE}×${TILE} m) · husleje +${kr(TILE_RENT)}/dag pr. felt</small></div>
         <div class="btns"><button class="btn" data-act="expand">Udvid</button></div></div>
-      <h3>🪴 Hygge & trivsel</h3><p class="tip">Et rart lager giver glade medarbejdere: alt du placerer her får teamet til at arbejde hurtigere. Trivsel nu: <b>+${Math.round(mood(s) * 100)} %</b></p>${all.filter(([, F]) => F.decor).map(card).join('')}
+      <h3>🪴 Hygge & trivsel</h3><p class="tip">Glade medarbejdere arbejder hurtigere. Pynten virker på dem, der arbejder tæt på den – se under 👥 Ansatte, hvad hver enkelt savner.</p>${all.filter(([, F]) => F.decor).map(card).join('')}
       <h3>⬆️ Opgraderinger</h3>` +
       Object.entries(UPGRADES).map(([k, U]) => {
         const cur = U.levels[s.upg[k]], next = U.levels[s.upg[k] + 1];
@@ -549,6 +552,7 @@ export class UI {
         <div class="stat"><small>Konvertering</small><b>${(fx.conv * 100).toFixed(1)} %</b></div>
         <div class="stat"><small>Tabte salg</small><b>${fmt(st.lost)}</b></div>
       </div>
+      ${cloud.user ? `<p class="tip acct">👤 Logget ind som <b>${esc(cloud.user)}</b> · spillet gemmes i skyen</p><button class="btn ghost wide" data-act="logout">Log ud</button>` : ''}
       <button class="btn ghost wide" data-act="reset">${this.confirmReset ? 'Tryk igen for at slette alt' : 'Start forfra'}</button>`;
   }
 }
