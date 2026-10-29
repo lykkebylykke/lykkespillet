@@ -140,6 +140,11 @@ export const FURNITURE = {
 export const BOX_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 11.8 + (i % 4) * 1.3, z: 2.2 + Math.floor(i / 4) * 1.3 }));
 export const DELIVERY_SPOT = { x: 13.75, z: 5.0 };
 export const PALLET = { x: 16.6, z: 15.7 };
+// The working day runs 07:00–18:30 in half-hour slots. A shift is at most 8 hours (70 % of the day)
+// and includes a break of 10 % of the shift in the middle. Wages follow the hours.
+export const SHIFT = { from: 7, slots: 23, max: 16, min: 2, pause: 0.1 };
+// Where staff come in and leave: the north door in the front wall.
+export const DOOR = { x: 17.4, z: 3.2 };
 export const IDLE = { packer: { x: 15.5, z: 12 }, stocker: { x: 16, z: 6.3 }, office: { x: 5.5, z: 6.4 } };
 
 export const UPGRADES = {

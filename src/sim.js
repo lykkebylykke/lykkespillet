@@ -3,14 +3,14 @@ import {
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
-  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP,
+  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP, onDuty,
 } from './state.js';
 
 export function effects(s) {
   const comp = upgVal(s, 'computer');
   let some = 0, ecom = 0;
   for (const e of s.employees) {
-    if (e.desk == null) continue;
+    if (e.desk == null || !onDuty(s, e)) continue;
     if (e.role === 'some') some += SOME_BONUS[e.tier] * comp * empEff(s, e);
     if (e.role === 'ecom') ecom += ECOM_BONUS[e.tier] * comp * (e.special === 'data' ? 1.5 : 1) * empEff(s, e);
   }
@@ -299,7 +299,7 @@ export function update(s, dt) {
   }
 
   // Customer service works through tickets; open tickets slowly hurt satisfaction.
-  for (const e of s.employees) if (e.role === 'support' && e.desk != null) s.ticketWork += supportRate(s, e) * dt;
+  for (const e of s.employees) if (e.role === 'support' && e.desk != null && onDuty(s, e)) s.ticketWork += supportRate(s, e) * dt;
   while (s.ticketWork >= 1) { s.ticketWork--; if (s.tickets > 0) { s.tickets--; s.stats.ticketsSolved++; s.satisfaction = Math.min(100, s.satisfaction + 0.8); } }
   if (!s.tickets) s.ticketWork = 0;
   if (s.tickets) s.satisfaction = Math.max(0, s.satisfaction - 0.012 * s.tickets * dt);
@@ -308,7 +308,7 @@ export function update(s, dt) {
   if (Math.random() < (fx.opm / 60) * dt) spawnOrder(s);
 
   for (const e of s.employees) {
-    if (e.role !== 'some' || e.desk == null) continue;
+    if (e.role !== 'some' || e.desk == null || !onDuty(s, e)) continue;
     e.postT = (e.postT || 0) + dt;
     if (e.postT < 25) continue;
     e.postT = 0;

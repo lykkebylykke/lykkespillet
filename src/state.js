@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
-  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS, AUTO_TASKS,
+  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS, AUTO_TASKS, SHIFT, DAY_LENGTH,
 } from './data.js';
 
 // Logged-in players get their own key (see cloud.js); guests use the plain one.
@@ -73,6 +73,7 @@ export function loadState() {
       }
       for (const type in FURNITURE) s.kit[type] ??= 0;
       for (const k in UPGRADES) s.upg[k] ??= 0;
+      for (const e of s.employees) e.shift ??= defaultShift(s, e.role);
       s.stats.returns ??= 0;
       s.boss ??= { ...DEFAULT_BOSS };
       // v5: a bad day means a negative balance, not a day that cost more than it earned.
@@ -139,7 +140,29 @@ export const unitPrice = (s, p) => Math.round(p.price * PRICE_MODES[s.priceMode[
 // Units on the shelf not yet promised to a queued order.
 export const available = (s, id) => (s.stock[id] || 0) - s.orders.filter((o) => o.productId === id && o.status === 'queued').length;
 export const queuedCount = (s) => s.orders.filter((o) => o.status === 'queued').length;
-export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1));
+export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1) * (e.shift ? (e.shift.b - e.shift.a) / SHIFT.max : 1));
+
+// ---------- shifts ----------
+// A shift is the half-hour slots [a, b) of the working day; the break sits in the middle of it.
+export const slotNow = (s) => (s.dayTime / DAY_LENGTH) * SHIFT.slots;
+export const clockText = (slot) => {
+  const m = Math.round(SHIFT.from * 60 + slot * 30);
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+};
+export const pauseOf = (sh) => { const len = (sh.b - sh.a) * SHIFT.pause, a = (sh.a + sh.b) / 2 - len / 2; return { a, b: a + len }; };
+export function dutyOf(s, e) {
+  const sh = e.shift, t = slotNow(s);
+  if (!sh) return 'work';
+  if (t < sh.a || t >= sh.b) return 'off';
+  const p = pauseOf(sh);
+  return t >= p.a && t < p.b ? 'pause' : 'work';
+}
+export const onDuty = (s, e) => dutyOf(s, e) === 'work';
+// New staff get an early or a late shift, whichever their role has fewest of.
+export function defaultShift(s, role) {
+  const same = s.employees.filter((e) => e.role === role && e.shift), early = same.filter((e) => e.shift.a === 0).length;
+  return early <= same.length - early ? { a: 0, b: SHIFT.max } : { a: SHIFT.slots - SHIFT.max, b: SHIFT.slots };
+}
 export function syncFurniture(s) {
   for (const [type, F] of Object.entries(FURNITURE)) if (F.key) s[F.key] = s.furniture.filter((f) => f.type === type).length;
 }
@@ -350,7 +373,7 @@ export function hire(s, cid) {
   const c = s.candidates.find((x) => x.cid === cid);
   if (!c || !spend(s, c.cost, 'hiring')) return false;
   s.candidates = s.candidates.filter((x) => x !== c);
-  const e = { id: s.nextId++, name: c.name, role: c.role, tier: 0, special: c.special || null, specialDesc: c.specialDesc || null, look: c.look, desk: null };
+  const e = { id: s.nextId++, name: c.name, role: c.role, tier: 0, special: c.special || null, specialDesc: c.specialDesc || null, look: c.look, desk: null, shift: defaultShift(s, c.role) };
   s.employees.push(e);
   assignDesks(s);
   bus.emit('hired', e);

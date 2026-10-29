@@ -1,10 +1,10 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS, RETURN_FREIGHT,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS, RETURN_FREIGHT, SHIFT,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, returnRate, returnFactors, listed,
+  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, returnRate, returnFactors, listed, slotNow, clockText, pauseOf, dutyOf,
 } from './state.js';
 import {
   effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, loanBlock, happiness, happyEff,
@@ -65,6 +65,7 @@ export class UI {
       if (!b || b.disabled) return;
       this.act(b.dataset.act);
     });
+    document.addEventListener('pointerdown', (ev) => this.dragShift(ev));
     bus.on('toast', (t, cls, ms) => this.toast(t, cls, ms));
     bus.on('bankrupt', () => this.bankrupt());
     bus.on('shelfMenu', (f) => this.shelfMenu(f));
@@ -74,6 +75,30 @@ export class UI {
     bus.on('ship', (rev, pos) => { this.w.popup(`+${fmt(rev)} kr`, pos, 'money'); bus.emit('sfx', 'coin'); });
     bus.on('built', (p) => { this.toast(`${p.icon} ${p.name} ${p.moved ? 'flyttet' : 'placeret'}!`, 'good'); bus.emit('sfx', p.moved ? 'pop' : 'level'); });
     bus.on('hired', (e) => this.toast(`👋 ${e.name} er startet som ${ROLES[e.role].name}!`, 'good'));
+  }
+
+  // Drag a shift bar (move) or one of its ends (when they come in / go home), snapping to half hours.
+  dragShift(ev) {
+    const bar = ev.target.closest('.shift');
+    if (!bar) return;
+    const e = this.s.employees.find((x) => x.id === +bar.dataset.id);
+    if (!e) return;
+    ev.preventDefault();
+    const kind = ev.target.closest('.h')?.dataset.h || 'move', N = SHIFT.slots;
+    const slotW = bar.parentElement.getBoundingClientRect().width / N, x0 = ev.clientX, { a: a0, b: b0 } = e.shift;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const move = (m) => {
+      const d = Math.round((m.clientX - x0) / slotW);
+      let a = a0, b = b0;
+      if (kind === 'move') { const k = clamp(d, -a0, N - b0); a += k; b += k; }
+      else if (kind === 'l') a = clamp(a0 + d, Math.max(0, b0 - SHIFT.max), b0 - SHIFT.min);
+      else b = clamp(b0 + d, a0 + SHIFT.min, Math.min(N, a0 + SHIFT.max));
+      if (a !== e.shift.a || b !== e.shift.b) { e.shift = { a, b }; this.renderSheet(true); }
+    };
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', up);
   }
 
   act(a) {
@@ -258,8 +283,7 @@ export class UI {
     const dh = `Dag ${s.day}${s.redDays ? ` <span class="red">⚠️ ${s.redDays}/${BANKRUPT_DAYS}</span>` : ''}`;
     if (dh !== this.dayHtml) { this.dayHtml = dh; $('#h-day').innerHTML = dh; }
     $('#h-daybar').style.width = `${(s.dayTime / DAY_LENGTH) * 100}%`;
-    const left = Math.max(0, Math.ceil(DAY_LENGTH - s.dayTime));
-    $('#h-daytxt').textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    $('#h-daytxt').textContent = `kl. ${clockText(Math.floor(slotNow(s) * 6) / 6)}`;
 
     const qs = this.quest();
     const qEl = $('#quest');
@@ -337,6 +361,7 @@ export class UI {
         <div class="av" style="background:${R.color}">${R.icon}</div>
         <div class="info"><b>${e.name} <span class="tag">${EMP_TIERS[e.tier].name}</span></b>
           <small>${R.name} · Løn ${kr(salaryOf(e))}/dag</small>
+          <small>🗓️ ${clockText(e.shift.a)}–${clockText(e.shift.b)} · ${DUTY[dutyOf(s, e)]}</small>
           <small class="eff">${this.effectText(e)}</small>
           ${e.special ? `<small class="special">✨ ${e.specialDesc}</small>` : ''}
           ${R.desk && e.desk == null ? '<small class="warn">⚠️ Mangler skrivebord</small>' : ''}
@@ -358,8 +383,10 @@ export class UI {
         <div class="btns"><button class="btn" data-act="hire:${c.cid}" ${s.money < c.cost ? 'disabled' : ''}>Ansæt<small>${kr(c.cost)}</small></button></div></div>`;
     }).join('');
     const locked = Object.values(ROLES).filter((r) => r.lvl > s.level).map((r) => `<div class="locked">🔒 ${r.icon} ${r.name} · Level ${r.lvl}</div>`).join('');
-    const hireTab = this.staffTab === 'hire';
-    const tabs = `<div class="seg subtabs"><button class="${hireTab ? '' : 'on'}" data-act="stab:team">👥 Personale (${s.employees.length})</button><button class="${hireTab ? 'on' : ''}" data-act="stab:hire">🤝 Ansæt (${s.candidates.length})</button></div>`;
+    const hireTab = this.staffTab === 'hire', st = this.staffTab;
+    const tab = (id, label) => `<button class="${st === id ? 'on' : ''}" data-act="stab:${id}">${label}</button>`;
+    const tabs = `<div class="seg subtabs">${tab('team', `👥 Personale (${s.employees.length})`)}${tab('plan', '🗓️ Vagtplan')}${tab('hire', `🤝 Ansæt (${s.candidates.length})`)}</div>`;
+    if (st === 'plan') return tabs + this.r_plan();
     return tabs + (hireTab
       ? `<p class="tip">Nye kandidater hver dag.</p>${cands || '<p class="empty">Ingen kandidater endnu – nå level 2 for at kunne ansætte.</p>'}${locked}`
       : `${this.autoCard()}<p class="tip">😊 <b>Glæde giver tempo:</b> en medarbejder på 0 arbejder i 75 % tempo, på 50 i 100 % og på 100 i 125 %. Pynt tæt på deres arbejdsplads, kolleger i samme område og ro i økonomien gør dem gladere.</p>${team.replace('Ansæt dit første teammedlem herunder!', 'Ansæt dit første teammedlem under 🤝 Ansæt.')}`);
@@ -380,6 +407,31 @@ export class UI {
         <small>Autopilot: chefen arbejder selv efter listen – øverst først. Imens kan du trække i skærmen for at se dig omkring og købe ind.</small>
         <button class="btn wide ${s.auto.on ? 'ok' : ''}" data-act="auto">${s.auto.on ? '🤖 Autopilot er TIL – tryk for at styre selv' : '🤖 Slå autopilot til'}</button>
         <div class="aprios">${rows}</div></div></div>`;
+  }
+
+  // Shift planner: one bar per employee on a 07:00–18:30 timeline. Drag a bar to move it, drag its ends to change hours.
+  r_plan() {
+    const s = this.s, N = SHIFT.slots, pct = (v) => `${((v / N) * 100).toFixed(2)}%`;
+    if (!s.employees.length) return '<p class="empty">Ansæt nogen først – så kan du lægge deres vagter her.</p>';
+    const hours = Array.from({ length: Math.floor(N / 2) + 1 }, (_, i) => `<span style="left:${pct(i * 2)}">${String(SHIFT.from + i).padStart(2, '0')}</span>`).join('');
+    const now = `<i class="now" style="left:${pct(Math.floor(slotNow(s) * 4) / 4)}"></i>`;
+    const rows = s.employees.map((e) => {
+      const R = ROLES[e.role], sh = e.shift, p = pauseOf(sh), h = (sh.b - sh.a) / 2;
+      return `<div class="prow"><div class="pwho"><span style="background:${R.color}">${R.icon}</span><b>${esc(e.name)}</b><small>${h % 1 ? h.toFixed(1).replace('.', ',') : h} t · ${DUTY_SHORT[dutyOf(s, e)]}</small></div>
+        <div class="ptrack">${now}<div class="shift" data-id="${e.id}" style="left:${pct(sh.a)};width:${pct(sh.b - sh.a)};--c:${R.color}">
+          <i class="pause" style="left:${(((p.a - sh.a) / (sh.b - sh.a)) * 100).toFixed(2)}%;width:${(SHIFT.pause * 100).toFixed(0)}%"></i>
+          <i class="h" data-h="l"></i><em>${clockText(sh.a)}–${clockText(sh.b)}</em><i class="h" data-h="r"></i></div></div></div>`;
+    }).join('');
+    // How many are actually working (not on a break) in each half hour.
+    const cover = Array.from({ length: N }, (_, k) => {
+      const n = s.employees.filter((e) => { const p = pauseOf(e.shift), t = k + 0.5; return t >= e.shift.a && t < e.shift.b && !(t >= p.a && t < p.b); }).length;
+      return `<i class="c${Math.min(n, 4)}" title="${clockText(k)}: ${n} på arbejde">${n || ''}</i>`;
+    }).join('');
+    const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
+    return `<p class="tip">Træk i en vagt for at flytte den, og i enderne for at ændre hvornår de møder ind og går hjem. Højst 8 timer – pausen (10 %, stribet) ligger midt i vagten. Lønnen følger timerne: <b>${kr(wages)}/dag</b>.</p>
+      <div class="plan"><div class="prow head"><div class="pwho"></div><div class="ptrack hours">${hours}</div></div>${rows}
+        <div class="prow cover"><div class="pwho"><b>Bemanding</b><small>på arbejde</small></div><div class="ptrack">${cover}</div></div></div>
+      <p class="tip">Uden for vagten går de hjem gennem døren. I pausen sætter de sig i sofaen, ved kaffebaren eller snakker med andre, der også holder pause.</p>`;
   }
 
   // Satisfaction bar going from red (unhappy) to green (happy), with the reasons underneath.
@@ -609,6 +661,8 @@ export class UI {
   }
 }
 
+const DUTY = { work: '🟢 På arbejde', pause: '☕ Pause', off: '🏠 Fri' };
+const DUTY_SHORT = { work: '🟢 Inde', pause: '☕ Pause', off: '🏠 Fri' };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 function rewardText(r) {
