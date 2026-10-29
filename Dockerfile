@@ -12,8 +12,9 @@ ENV NODE_ENV=production PORT=3000 DATA_DIR=/data
 COPY --from=build /app/dist ./dist
 COPY server ./server
 COPY package.json ./
-RUN mkdir -p /data && chown -R node:node /data
-USER node
+# Runs as root on purpose: hosts like Sliplane mount the /data volume owned by root,
+# and a non-root user can't write there (the server then crashes and health checks fail).
+RUN mkdir -p /data
 EXPOSE 3000
 VOLUME ["/data"]
 CMD ["node", "server/index.js"]

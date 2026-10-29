@@ -13,7 +13,12 @@ const PORT = Number(process.env.PORT || 3000);
 const SESSION_DAYS = 60;
 const MAX_SAVE = 2 * 1024 * 1024;
 
-fs.mkdirSync(path.join(DATA, 'saves'), { recursive: true });
+try {
+  fs.mkdirSync(path.join(DATA, 'saves'), { recursive: true });
+} catch (e) {
+  console.error(`Kan ikke skrive i ${DATA} – tjek at volumen er monteret og skrivbar.`, e.message);
+  process.exit(1);
+}
 
 // ---------- tiny JSON "database" (atomic writes) ----------
 const file = (name) => path.join(DATA, name);
