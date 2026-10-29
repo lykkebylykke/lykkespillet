@@ -295,7 +295,8 @@ body.building #toasts { bottom: calc(env(safe-area-inset-bottom) + 130px); }
 }
 #buildbar[hidden], #buildfab[hidden], .fab[hidden] { display: none; }
 #dropbtn { position: absolute; right: calc(var(--side) + 12px); bottom: calc(var(--nav-h) + 14px); z-index: 7; }
-body.building #dropbtn { display: none; }
+#pickbtn { position: absolute; left: calc(var(--side) + 12px); bottom: calc(var(--nav-h) + 14px); z-index: 7; background: var(--pink); color: #fff; }
+body.building #dropbtn, body.building #pickbtn { display: none; }
 .bmsg { font-size: 13px; color: var(--muted); margin: 0 2px 9px; }
 .bmsg b { color: var(--ink); }
 .bmsg .bad { color: var(--red); font-weight: 700; }

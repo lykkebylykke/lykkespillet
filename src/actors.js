@@ -93,6 +93,10 @@ export class Player {
     document.getElementById('app').insertAdjacentHTML('beforeend', '<button id="dropbtn" class="fab" hidden>✋ Læg fra dig</button>');
     this.dropBtn = document.getElementById('dropbtn');
     this.dropBtn.addEventListener('click', () => this.drop());
+    // With a packer on the team the boss only picks orders after saying yes.
+    document.getElementById('app').insertAdjacentHTML('beforeend', '<button id="pickbtn" class="fab" hidden>🛒 Pluk selv</button>');
+    this.pickBtn = document.getElementById('pickbtn');
+    this.pickBtn.addEventListener('click', () => { this.pickOk = true; bus.emit('sfx', 'click'); });
   }
 
   // Put down whatever we hold right in front of us; it stays there until someone picks it up.
@@ -220,13 +224,15 @@ export class Player {
       const d = Math.hypot(z.x - this.pos.x, z.z - this.pos.z);
       if (d < z.r && d < best) { best = d; zone = z; }
     }
-    if (zone !== this.zone) { this.zone = zone; this.prog = 0; }
+    if (zone !== this.zone) { this.zone = zone; this.prog = 0; this.pickOk = false; }
+    this.askPick = false;
     if (this.heldTable != null && !(zone?.type === 'table' && zone.idx === this.heldTable && this.carry?.kind === 'items')) {
       if (w.tableRes[this.heldTable] === 'player') w.tableRes[this.heldTable] = null;
       this.heldTable = null;
     }
 
     const act = floor ? this.pickupAction(floor) : zone ? this.actionFor(zone) : null;
+    if (this.pickBtn.hidden === this.askPick) this.pickBtn.hidden = !this.askPick;
     animateCharacter(this.mesh, this.t, this.moving, !!this.carry, act?.working && !this.moving);
     if (act && !act.blocked && act.dur) {
       this.prog += dt;
@@ -262,6 +268,7 @@ export class Player {
       }
       if (!queuedCount(s)) return { label: c ? `Bær varerne til pakkebordet` : 'Ingen ordrer at plukke' };
       if (room <= 0) return { label: 'Fuld – gå til pakkebordet', blocked: true };
+      if (!this.pickOk && s.employees.some((e) => e.role === 'packer')) { this.askPick = true; return { label: 'Pakkeren plukker ordrerne 📦' }; }
       return {
         label: 'Plukker vare til ordre', dur: 0.35, working: true,
         run: () => {
