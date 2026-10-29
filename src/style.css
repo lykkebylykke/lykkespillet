@@ -45,7 +45,9 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: 0; }
 .bubble .in {
   background: #fff; padding: 3px 10px; border-radius: 999px; font-size: 13px; box-shadow: var(--shadow);
 }
-.bubble.hot .in { background: var(--red); color: #fff; animation: pulse 0.9s infinite; }
+.bubble.hot .in { background: var(--red); color: #fff; animation: lpulse 0.9s infinite; }
+/* World labels are positioned with translate, so their pulse must keep it (plain scale made them jump). */
+@keyframes lpulse { 50% { transform: translate(-50%, -100%) scale(1.06); } }
 .pad .in {
   display: flex; flex-direction: column; align-items: center; gap: 1px;
   background: rgba(255, 255, 255, 0.92); padding: 4px 9px; border-radius: 12px; font-size: 11px; box-shadow: var(--shadow);
@@ -390,3 +392,12 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .olist i { font-style: normal; font-size: 12px; background: #f1eef7; color: var(--ink); border-radius: 8px; padding: 1px 5px; }
 .olist i.got { background: #d6f5e3; color: #1e8c57; }
 .bubble.hot .olist i { background: rgba(255, 255, 255, 0.85); }
+/* The order list grows big when busy: glow instead of pulsing so it's readable. */
+.bubble.orders.hot .in { animation: glow 1.4s ease-in-out infinite; }
+@keyframes glow { 50% { box-shadow: 0 0 0 4px rgba(239, 71, 111, 0.35), var(--shadow); } }
+
+/* ---------- count on top of each shelf ---------- */
+.bubble.shelfqty .in { font-size: 11px; padding: 2px 7px; opacity: 0.92; }
+.bubble.shelfqty b { color: var(--muted); margin-left: 2px; }
+.bubble.shelfqty.empty .in { color: var(--muted); }
+.bubble.shelfqty.full b { color: var(--red); }

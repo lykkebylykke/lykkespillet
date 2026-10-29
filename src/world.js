@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { BOX_SLOTS, DELIVERY_SPOT, PALLET, FURNITURE, PRODUCTS, productById } from './data.js';
-import { capacity, stockTotal, queuedCount, shelfCap, shelfCount } from './state.js';
+import { queuedCount, shelfCap, shelfCount } from './state.js';
 
 // The lot is split into 2×2 m tiles; the shop owns the original 18×20 m and can buy more (not towards the road).
 export const TILE = 2;
@@ -426,6 +426,9 @@ export class World {
       st.spots.push({ ax: bx, az: bz, fx: -st.fx, fz: -st.fz });
       this.zones.push({ type: st.type, idx: st.i, x: bx, z: bz, r: FURNITURE[st.type].r });
     }
+    // One count label on top of each shelf (higher when it carries a product sign).
+    for (const L of this.shelfLabels || []) L.remove();
+    this.shelfLabels = this.shelves.map((sh) => this.addLabel('bubble shelfqty', '', new THREE.Vector3(sh.x, sh.f.only ? 2.95 : 2.45, sh.z)));
     this.shelfSig = '';
     this.buildGrid();
   }
@@ -474,7 +477,6 @@ export class World {
     // These follow the first table / shelf / desk wherever it was placed.
     const above = (list, y, fallback) => () => (list()[0] ? new THREE.Vector3(list()[0].x, y, list()[0].z) : fallback);
     this.lblOrders = this.addLabel('bubble orders', '', above(() => this.tables, 1.9, new THREE.Vector3(15.6, 1.9, 9)));
-    this.lblStock = this.addLabel('bubble', '', above(() => this.shelves, 2.5, new THREE.Vector3(4.75, 2.5, 9.2)));
     this.lblTickets = this.addLabel('bubble', '', above(() => this.desks, 2.2, new THREE.Vector3(4.6, 2.2, 3.4)));
     this.lblQuest = this.addLabel('qarrow', '⬇', new THREE.Vector3(), { clamp: true });
     this.lblQuest.hidden = true;
@@ -673,7 +675,7 @@ export class World {
     this.sun.target.position.copy(this.camTarget);
 
     // Shelf contents
-    const cap = capacity(s), per = shelfCap(s);
+    const per = shelfCap(s);
     const sig = JSON.stringify(this.shelves.map((sh) => sh.f.stock)) + per;
     if (sig !== this.shelfSig) {
       this.shelfSig = sig;
@@ -681,7 +683,12 @@ export class World {
       for (const sh of this.shelves) {
         const seq = PRODUCTS.map((p) => [p.color, sh.f.stock?.[p.id] || 0]);
         const colorAt = (u) => { for (const [c, n] of seq) { if (u < n) return c; u -= n; } return '#ffffff'; };
-        const shown = Math.ceil((Math.min(per, shelfCount(sh.f)) / per) * 20);
+        const n = shelfCount(sh.f), shown = Math.ceil((Math.min(per, n) / per) * 20);
+        const what = PRODUCTS.filter((p) => sh.f.stock?.[p.id]).map((p) => `${p.icon}${sh.f.stock[p.id]}`).join(' ');
+        const L = this.shelfLabels[sh.i];
+        L.set(`${what || 'Tom'} <b>${n}/${per}</b>`);
+        L.el.classList.toggle('full', n >= per);
+        L.el.classList.toggle('empty', !n);
         sh.items.forEach((m, k) => {
           m.visible = k < shown;
           if (m.visible) m.material = mat(colorAt(Math.floor((k * per) / 20)));
@@ -758,9 +765,6 @@ export class World {
     this.lblOrders.el.classList.toggle('hot', q >= 6);
     this.lblTickets.set(s.tickets ? `🎧 ${s.tickets} ${s.tickets === 1 ? 'henvendelse' : 'henvendelser'}` : '');
     this.lblTickets.el.classList.toggle('hot', s.tickets >= 5);
-    const st = stockTotal(s);
-    this.lblStock.set(`🏬 ${st}/${cap}`);
-    this.lblStock.el.classList.toggle('hot', st >= cap);
 
     if (questTarget) {
       this.arrow.visible = true;
