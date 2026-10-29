@@ -235,7 +235,7 @@ export class Player {
       this.heldTable = null;
     }
 
-    const act = floor ? this.pickupAction(floor) : zone ? this.actionFor(zone) : null;
+    const act = this.act = floor ? this.pickupAction(floor) : zone ? this.actionFor(zone) : null;
     if (this.pickBtn.hidden === this.askPick) this.pickBtn.hidden = !this.askPick;
     this.atShelf = !floor && zone?.type === 'shelf' ? w.shelves[zone.idx]?.f : null;
     if (this.shelfBtn.hidden === !!this.atShelf) this.shelfBtn.hidden = !this.atShelf;
@@ -277,7 +277,7 @@ export class Player {
       if (!queuedCount(s)) return { label: c ? `Bær varerne til pakkebordet` : 'Ingen ordrer at plukke' };
       if (!shelfHasOrder(s, f)) return { label: c ? 'Bær varerne til pakkebordet' : 'Ordrerne skal bruge varer fra en anden reol' };
       if (room <= 0) return { label: 'Fuld – gå til pakkebordet', blocked: true };
-      if (!this.pickOk && s.employees.some((e) => e.role === 'packer')) { this.askPick = true; return { label: 'Pakkeren plukker ordrerne 📦' }; }
+      if (!this.pickOk && !s.auto.on && s.employees.some((e) => e.role === 'packer')) { this.askPick = true; return { label: 'Pakkeren plukker ordrerne 📦' }; }
       return {
         label: 'Plukker vare til ordre', dur: 0.35, working: true,
         run: () => {

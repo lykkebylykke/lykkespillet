@@ -29,13 +29,34 @@ export const xpFor = (l) => Math.round(80 * Math.pow(l, 1.55));
 export const PRODUCTS = [
   { id: 'tshirt', name: 'T-shirt', icon: '👕', tier: 'Basic', cost: 60, price: 149, pop: 1.0, color: '#ff8fab', lvl: 1, box: 10 },
   { id: 'cap', name: 'Kasket', icon: '🧢', tier: 'Basic', cost: 40, price: 119, pop: 0.8, color: '#ffd166', lvl: 1, box: 10 },
+  { id: 'socks', name: 'Strømper', icon: '🧦', tier: 'Basic', cost: 25, price: 79, pop: 0.9, color: '#f4a261', lvl: 2, box: 20 },
   { id: 'hoodie', name: 'Hoodie', icon: '🧥', tier: 'Basic', cost: 140, price: 349, pop: 0.9, color: '#7b8cff', lvl: 2, box: 10 },
+  { id: 'tote', name: 'Mulepose', icon: '🛍️', tier: 'Basic', cost: 35, price: 129, pop: 0.8, color: '#e9c46a', lvl: 3, box: 15 },
   { id: 'jeans', name: 'Jeans', icon: '👖', tier: 'Basic', cost: 170, price: 399, pop: 0.8, color: '#3d5a98', lvl: 4, box: 10 },
+  { id: 'shades', name: 'Solbriller', icon: '🕶️', tier: 'Trending', cost: 120, price: 299, pop: 1.0, color: '#264653', lvl: 5, box: 10 },
+  { id: 'gloves', name: 'Handsker', icon: '🧤', tier: 'Basic', cost: 50, price: 149, pop: 0.7, color: '#bc4749', lvl: 6, box: 15 },
   { id: 'sneakers', name: 'Sneakers', icon: '👟', tier: 'Trending', cost: 280, price: 699, pop: 1.1, color: '#ff7b54', lvl: 6, box: 10 },
+  { id: 'shorts', name: 'Shorts', icon: '🩳', tier: 'Basic', cost: 90, price: 229, pop: 0.9, color: '#90be6d', lvl: 7, box: 10 },
+  { id: 'swim', name: 'Badetøj', icon: '👙', tier: 'Trending', cost: 110, price: 279, pop: 1.0, color: '#00b4d8', lvl: 8, box: 10 },
   { id: 'dress', name: 'Kjole', icon: '👗', tier: 'Trending', cost: 220, price: 549, pop: 1.2, color: '#c77dff', lvl: 9, box: 10 },
+  { id: 'handbag', name: 'Håndtaske', icon: '👜', tier: 'Premium', cost: 450, price: 1199, pop: 0.8, color: '#9d4edd', lvl: 10, box: 5 },
+  { id: 'boots', name: 'Støvler', icon: '👢', tier: 'Premium', cost: 350, price: 899, pop: 0.9, color: '#8d5524', lvl: 11, box: 10 },
   { id: 'scarf', name: 'Kashmir-tørklæde', icon: '🧣', tier: 'Premium', cost: 300, price: 799, pop: 0.9, color: '#2ec4b6', lvl: 12, box: 10 },
+  { id: 'watch', name: 'Ur', icon: '⌚', tier: 'Premium', cost: 700, price: 1799, pop: 0.7, color: '#6c757d', lvl: 13, box: 5 },
   { id: 'limited', name: 'Limited Drop', icon: '👑', tier: 'Limited', cost: 600, price: 1999, pop: 1.6, color: '#f5b400', lvl: 15, box: 5 },
+  { id: 'ring', name: 'Guldring', icon: '💍', tier: 'Limited', cost: 900, price: 2499, pop: 0.8, color: '#ff6b9d', lvl: 17, box: 5 },
 ];
+// Fashion changes from day to day: one product is in (more orders), sometimes one is out (fewer).
+export const TREND = { hot: 2.5, flop: 0.5, days: [1, 4], flopFrom: 3 };
+
+// What the boss does on autopilot, in the order the player sets.
+export const AUTO_TASKS = {
+  pack: { icon: '📦', name: 'Pak ordrer', desc: 'Pakker de varer chefen har i hænderne' },
+  pick: { icon: '🛒', name: 'Pluk ordrer', desc: 'Henter varer på reolerne og samler varer op fra gulvet' },
+  stock: { icon: '🧱', name: 'Fyld reolerne', desc: 'Bærer kasser fra varemodtagelsen op på reolerne' },
+  tickets: { icon: '🎧', name: 'Kundeservice', desc: 'Besvarer henvendelser ved et ledigt skrivebord' },
+  web: { icon: '💻', name: 'Opdatér webshoppen', desc: '+25 % konvertering, når den gamle opdatering løber ud' },
+};
 export const productById = Object.fromEntries(PRODUCTS.map((p) => [p.id, p]));
 
 export const TIER_COLORS = { Basic: '#8d99ae', Trending: '#ff5d8f', Premium: '#7b61ff', Limited: '#e0a100' };

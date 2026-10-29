@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
@@ -107,6 +107,13 @@ export class UI {
     }
     if (cmd === 'ptab') this.prodTab = x;
     if (cmd === 'stab') this.staffTab = x;
+    if (cmd === 'auto') s.auto.on = !s.auto.on;
+    if (cmd === 'autoSet') { this.staffTab = 'team'; this.open('staff'); return; }
+    if (cmd === 'autoMove') {
+      const L = s.auto.prio, i = L.indexOf(x), j = i + +y;
+      if (j >= 0 && j < L.length) [L[i], L[j]] = [L[j], L[i]];
+    }
+    if (cmd === 'autoOff') s.auto.off = s.auto.off.includes(x) ? s.auto.off.filter((k) => k !== x) : [...s.auto.off, x];
     if (cmd === 'qmin') s.hideQuest = x === '1';
     if (cmd === 'tips') s.hideTips = x === '0';
     if (cmd === 'shelfOnly') {
@@ -282,9 +289,20 @@ export class UI {
     $('#boosts').innerHTML = (camp ? `<div class="boost camp"><span>${camp.icon}</span>${camp.name} · ${Math.ceil(camp.until - s.time)}s<i style="width:${((camp.until - s.time) / camp.total) * 100}%"></i></div>` : '') + s.boosts.map((b) => {
       const left = Math.max(0, b.until - s.time);
       return `<div class="boost"><span>${b.icon}</span>${b.name} · ${Math.ceil(left)}s<i style="width:${(left / b.total) * 100}%"></i></div>`;
-    }).join('') + (s.trend && s.trend.until > s.time ? `<div class="boost trend"><span>🔥</span>${productById[s.trend.id].name} trender · ${Math.ceil(s.trend.until - s.time)}s</div>` : '');
+    }).join('') + this.trendChips();
 
     this.renderSheet();
+  }
+
+  trendChips() {
+    const s = this.s, days = (d) => (d === 1 ? 'i dag' : `${d} dage`);
+    return (s.trend ? `<div class="boost trend" data-act="tab:buy"><span>🔥</span>${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender · ${days(s.trend.days)}</div>` : '')
+      + (s.flop ? `<div class="boost flop"><span>📉</span>${productById[s.flop.id].icon} ${productById[s.flop.id].name} er ude · ${days(s.flop.days)}</div>` : '');
+  }
+
+  trendTag(id) {
+    const s = this.s;
+    return s.trend?.id === id ? ` <span class="tag hot">🔥 Trend ×${TREND.hot}</span>` : s.flop?.id === id ? ` <span class="tag cold">📉 Ude af mode</span>` : '';
   }
 
   renderSheet(force) {
@@ -327,7 +345,24 @@ export class UI {
     const tabs = `<div class="seg subtabs"><button class="${hireTab ? '' : 'on'}" data-act="stab:team">👥 Personale (${s.employees.length})</button><button class="${hireTab ? 'on' : ''}" data-act="stab:hire">🤝 Ansæt (${s.candidates.length})</button></div>`;
     return tabs + (hireTab
       ? `<p class="tip">Nye kandidater hver dag.</p>${cands || '<p class="empty">Ingen kandidater endnu – nå level 2 for at kunne ansætte.</p>'}${locked}`
-      : `<p class="tip">😊 <b>Glæde giver tempo:</b> en medarbejder på 0 arbejder i 75 % tempo, på 50 i 100 % og på 100 i 125 %. Pynt tæt på deres arbejdsplads, kolleger i samme område og ro i økonomien gør dem gladere.</p>${team.replace('Ansæt dit første teammedlem herunder!', 'Ansæt dit første teammedlem under 🤝 Ansæt.')}`);
+      : `${this.autoCard()}<p class="tip">😊 <b>Glæde giver tempo:</b> en medarbejder på 0 arbejder i 75 % tempo, på 50 i 100 % og på 100 i 125 %. Pynt tæt på deres arbejdsplads, kolleger i samme område og ro i økonomien gør dem gladere.</p>${team.replace('Ansæt dit første teammedlem herunder!', 'Ansæt dit første teammedlem under 🤝 Ansæt.')}`);
+  }
+
+  // The boss's autopilot: on/off and the priority list.
+  autoCard() {
+    const s = this.s, L = s.auto.prio;
+    const rows = L.map((id, i) => {
+      const T = AUTO_TASKS[id], off = s.auto.off.includes(id);
+      return `<div class="aprio ${off ? 'off' : ''}">
+        <b>${i + 1}</b><div><span>${T.icon} ${T.name}</span><small>${T.desc}</small></div>
+        <button data-act="autoMove:${id}:-1" ${i ? '' : 'disabled'}>▲</button><button data-act="autoMove:${id}:1" ${i < L.length - 1 ? '' : 'disabled'}>▼</button>
+        <button class="tgl ${off ? '' : 'on'}" data-act="autoOff:${id}">${off ? 'Fra' : 'Til'}</button></div>`;
+    }).join('');
+    return `<div class="card autocard"><div class="av" style="background:#ffd166">👑</div>
+      <div class="info"><b>${esc(s.boss?.name || 'Chefen')} <span class="tag gold">Chef</span></b>
+        <small>Autopilot: chefen arbejder selv efter listen – øverst først. Imens kan du trække i skærmen for at se dig omkring og købe ind.</small>
+        <button class="btn wide ${s.auto.on ? 'ok' : ''}" data-act="auto">${s.auto.on ? '🤖 Autopilot er TIL – tryk for at styre selv' : '🤖 Slå autopilot til'}</button>
+        <div class="aprios">${rows}</div></div></div>`;
   }
 
   // Satisfaction bar going from red (unhappy) to green (happy), with the reasons underneath.
@@ -385,11 +420,10 @@ export class UI {
     return `<p class="tip">Lager: <b>${stockTotal(s)}/${capacity(s)}</b> · Varer der er bestilt men ikke plukket, står stadig på reolen.</p>` + mine.map((p) => {
       const price = unitPrice(s, p), mode = s.priceMode[p.id] || 'normal';
       const stock = s.stock[p.id] || 0, tr = transit(p.id), free = Math.max(0, available(s, p.id));
-      const trend = s.trend?.id === p.id && s.trend.until > s.time;
       return `<div class="card prod">
         <div class="av big" style="background:${p.color}33">${p.icon}</div>
         <div class="info">
-          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${trend ? ' <span class="tag hot">🔥 Trend</span>' : ''}${stock ? '' : ' <span class="tag hot">Udsolgt</span>'}</b>
+          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${this.trendTag(p.id)}${stock ? '' : ' <span class="tag hot">Udsolgt</span>'}</b>
           <small>På reolen: <b class="${free ? '' : 'warn'}">${stock}</b>${stock !== free ? ` (${stock - free} bestilt)` : ''}${tr ? ` · På vej: ${tr}` : ''} · Solgt: ${s.sold[p.id] || 0}</small>
           <small>Salgspris ${kr(price)} · Margin <b>${kr(price - p.cost)}</b></small>
           <div class="seg">${Object.entries(PRICE_MODES).map(([k, m]) => `<button class="${k === mode ? 'on' : ''}" data-act="price:${p.id}:${k}">${m.name} pris</button>`).join('')}</div>
@@ -405,7 +439,7 @@ export class UI {
       return `<div class="card prod">
         <div class="av big" style="background:${p.color}33">${p.icon}</div>
         <div class="info">
-          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${s.everStocked[p.id] ? '' : ' <span class="tag gold">NY</span>'}</b>
+          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${s.everStocked[p.id] ? '' : ' <span class="tag gold">NY</span>'}${this.trendTag(p.id)}</b>
           <small>Indkøb ${kr(p.cost)} · Salg ${kr(p.price)} · På reolen: ${s.stock[p.id] || 0}</small>
           <small>Popularitet ${'★'.repeat(Math.round(p.pop * 3))}${'☆'.repeat(Math.max(0, 5 - Math.round(p.pop * 3)))}</small>
           <div class="buyrow">

@@ -7,6 +7,7 @@ import { UI } from './ui.js';
 import { Builder } from './build.js';
 import { Creator } from './creator.js';
 import { startCloud } from './cloud.js';
+import { Autopilot } from './auto.js';
 
 // ---------- input: virtual joystick + keyboard ----------
 class Input {
@@ -104,16 +105,18 @@ function boot() {
   const ui = new UI(s, world);
   const builder = new Builder(world, s, player);
   const input = new Input(canvas);
-  input.dragMode = () => builder.active;
+  const auto = new Autopilot(world, s, player);
+  // On autopilot a drag (or WASD) moves the camera instead of the boss.
+  input.dragMode = () => builder.active || s.auto.on;
   // The game stays playable with a menu open; on a phone the menu covers the game, so touching it closes the menu.
   input.onPress = () => { if (ui.sheetOpen && innerWidth < 720) ui.open('home'); };
-  input.onDrag = (ax, ay, bx, by, ox, oy) => builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by), world.screenToGround(ox, oy));
+  input.onDrag = (ax, ay, bx, by, ox, oy) => (!builder.active ? auto.pan(world.screenToGround(ax, ay), world.screenToGround(bx, by)) : builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by), world.screenToGround(ox, oy)));
   input.onTap = (cx, cy) => {
     const p = world.screenToGround(cx, cy);
     if (builder.active) builder.onTap(p);
-    else if (p) player.goTo(world.walkTarget(p));
+    else if (p && !s.auto.on) player.goTo(world.walkTarget(p));
   };
-  window.__game = { s, world, player, crew, ui, builder };
+  window.__game = { s, world, player, crew, ui, builder, auto };
   // A brand-new shop starts by creating the boss, then placing the starter kit.
   const startKit = () => { if (!s.furniture.length && builder.kitCount()) builder.kit(); };
   let creating = !s.boss;
@@ -138,11 +141,14 @@ function boot() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (!creating) simUpdate(s, dt);
-    player.update(dt, creating || builder.active ? { x: 0, z: 0 } : input.dir);
+    const still = creating || builder.active || s.auto.on;
+    if (s.auto.on && !builder.active) auto.panDir(input.dir, dt);
+    player.update(dt, still ? { x: 0, z: 0 } : input.dir);
+    auto.update(dt);
     builder.update(player.pos);
     crew.update(dt);
     ui.update(dt);
-    world.update(dt, builder.focus, builder.active ? null : ui.questTarget());
+    world.update(dt, s.auto.on && !builder.active ? auto.focus() : builder.focus, builder.active ? null : ui.questTarget());
     world.render();
     if ((saveT += dt) > 5) { saveT = 0; saveState(s); }
     requestAnimationFrame(frame);

@@ -401,3 +401,27 @@ body.building #nav, body.building #hud .panel, body.building #boosts, body.build
 .bubble.shelfqty b { color: var(--muted); margin-left: 2px; }
 .bubble.shelfqty.empty .in { color: var(--muted); }
 .bubble.shelfqty.full b { color: var(--red); }
+
+/* ---------- trends ---------- */
+.boost.flop { background: #e8eef7; color: #4a5a78; }
+.tag.cold { background: #8da9c4; }
+
+/* ---------- autopilot ---------- */
+#autobtn { display: flex; align-items: stretch; padding: 0; overflow: hidden; }
+#autobtn button { font: inherit; font-weight: 700; padding: 10px 12px; color: inherit; background: none; }
+#autobtn .gear { padding: 10px 10px; border-left: 1px solid rgba(0, 0, 0, 0.08); }
+#autobtn.on { background: var(--green); color: #fff; }
+#autobtn.on .gear { border-left-color: rgba(255, 255, 255, 0.35); }
+#followbtn { background: var(--blue); color: #fff; }
+.autocard .btn.wide { margin: 8px 0 4px; font-size: 14px; padding: 10px; }
+.autocard .btn.ok { background: var(--green); box-shadow: 0 3px 0 #1e8c57; }
+.aprios { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+.aprio { display: grid; grid-template-columns: 18px 1fr auto auto auto; align-items: center; gap: 5px; background: #fff; border-radius: 12px; padding: 6px 7px; box-shadow: 0 1px 3px rgba(60, 30, 90, 0.08); }
+.aprio > b { color: var(--muted); text-align: center; }
+.aprio span { font-weight: 700; font-size: 13px; }
+.aprio small { display: block; font-size: 11px; color: var(--muted); line-height: 1.25; }
+.aprio button { font: inherit; font-size: 12px; font-weight: 700; background: #f1eef7; border-radius: 8px; padding: 5px 7px; color: var(--ink); }
+.aprio button:disabled { opacity: 0.3; }
+.aprio .tgl { background: #e3dfee; color: var(--muted); min-width: 36px; }
+.aprio .tgl.on { background: var(--green); color: #fff; }
+.aprio.off span, .aprio.off small { opacity: 0.45; }

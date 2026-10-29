@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
-  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS,
+  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS, AUTO_TASKS,
 } from './data.js';
 
 // Logged-in players get their own key (see cloud.js); guests use the plain one.
@@ -38,7 +38,8 @@ export function newState() {
     furniture: [], kit: { shelf: 1, table: 1, desk: 1 }, drops: [], shelves: 0, tables: 0, desks: 0,
     upg: { packTable: 0, computer: 0, storage: 0, webshop: 0, shoes: 0, trolley: 0 },
     employees: [], candidates: [],
-    boosts: [], trend: null, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
+    boosts: [], trend: null, flop: null,
+    auto: { on: false, prio: ['pack', 'pick', 'stock', 'tickets', 'web'], off: [] }, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
     satisfaction: 80, parcels: 0,
     loans: [], redDays: 0, bankrupt: false, boss: null, tiles: [], hideTips: false, hideQuest: false,
     player: { x: 14, z: 7, carry: null },
@@ -71,6 +72,8 @@ export function loadState() {
       }
       for (const type in FURNITURE) s.kit[type] ??= 0;
       s.boss ??= { ...DEFAULT_BOSS };
+      if (s.trend?.until != null) s.trend = null; // old trends lasted seconds; now they last days
+      for (const id of Object.keys(AUTO_TASKS)) if (!s.auto.prio.includes(id)) s.auto.prio.push(id);
       if (s.loan) s.loans.push(s.loan);
       delete s.loan;
       syncFurniture(s);

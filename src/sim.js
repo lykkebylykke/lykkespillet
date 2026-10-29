@@ -1,5 +1,5 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner, PRODUCTS, TREND,
 } from './data.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
@@ -69,8 +69,7 @@ function lose(s, p, why) {
 function spawnOrder(s) {
   const L = listed(s);
   if (!L.length) return;
-  const trend = s.trend && s.trend.until > s.time ? s.trend.id : null;
-  const w = L.map((p) => p.pop * PRICE_MODES[s.priceMode[p.id] || 'normal'].demand * (p.id === trend ? 3 : 1));
+  const w = L.map((p) => p.pop * PRICE_MODES[s.priceMode[p.id] || 'normal'].demand * trendMult(s, p.id));
   let r = Math.random() * w.reduce((a, b) => a + b, 0);
   let p = L[L.length - 1];
   for (let i = 0; i < L.length; i++) { r -= w[i]; if (r <= 0) { p = L[i]; break; } }
@@ -205,23 +204,42 @@ function endDay(s) {
   s.day++;
   s.dayTime = 0;
   refreshCandidates(s);
+  rollTrends(s);
   if (s.bankrupt) bus.emit('bankrupt');
 }
 
+// ---------- trends: what's in fashion changes from day to day ----------
+export const trendMult = (s, id) => (s.trend?.id === id ? TREND.hot : s.flop?.id === id ? TREND.flop : 1);
+const rollDays = () => TREND.days[0] + Math.floor(Math.random() * (TREND.days[1] - TREND.days[0] + 1));
+
+// Called at the start of each day: a running trend may carry on for a few days, otherwise a new one takes over.
+export function rollTrends(s) {
+  const open = PRODUCTS.filter((p) => p.lvl <= s.level);
+  if (open.length < 2) return;
+  if (s.trend && --s.trend.days > 0) bus.emit('toast', `🔥 ${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender stadig${s.trend.days === 1 ? ' – sidste dag' : ''}`, 'event');
+  else {
+    const p = pick(open.filter((q) => q.id !== s.trend?.id));
+    s.trend = { id: p.id, days: rollDays() };
+    bus.emit('toast', `🔥 Ny trend: ${p.icon} ${p.name} er det alle vil have! Efterspørgsel ×${TREND.hot}`, 'event', 6000);
+  }
+  if (s.flop && --s.flop.days > 0) return;
+  s.flop = null;
+  const mine = listed(s).filter((p) => p.id !== s.trend.id);
+  if (s.level >= TREND.flopFrom && mine.length > 1 && Math.random() < 0.5) {
+    const p = pick(mine);
+    s.flop = { id: p.id, days: rollDays() };
+    bus.emit('toast', `📉 ${p.icon} ${p.name} er gået af mode – færre vil købe den lige nu`, 'warn', 6000);
+  }
+}
+
 function randomEvent(s) {
-  const L = listed(s);
   const opts = [];
-  if (L.length > 1) opts.push('trend');
   if (s.level >= 3) opts.push('delay');
   if (s.level >= 6) opts.push('blackfriday');
   if (s.level >= 2) opts.push('tiktok');
   if (!opts.length) return;
   const ev = pick(opts);
-  if (ev === 'trend') {
-    const p = pick(L);
-    s.trend = { id: p.id, until: s.time + 75 };
-    bus.emit('toast', `🔥 ${p.icon} ${p.name} går viralt! Efterspørgslen er ×3 i 75 sek.`, 'event');
-  } else if (ev === 'delay') {
+  if (ev === 'delay') {
     s.delayUntil = s.time + 90;
     bus.emit('toast', '🚧 Leverandør forsinket – nye leverancer tager længere tid.', 'warn');
   } else if (ev === 'blackfriday') {
@@ -238,6 +256,7 @@ export function update(s, dt) {
   if (stuck(s)) { s.bankrupt = true; s.bankruptWhy = 'stuck'; bus.emit('bankrupt'); return; }
   s.time += dt;
   s.dayTime += dt;
+  if (!s.trend && listed(s).length) rollTrends(s); // the first trend arrives once the shop is open
   if (s.dayTime >= DAY_LENGTH) endDay(s);
   if (s.boosts.some((b) => b.until <= s.time)) s.boosts = s.boosts.filter((b) => b.until > s.time);
 
