@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
-  UPGRADES, BOX_SLOTS, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS, AUTO_TASKS, SHIFT, DAY_LENGTH,
+  UPGRADES, BOX_SLOTS, DELIVERY_SPOT, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS, AUTO_TASKS, SHIFT, DAY_LENGTH,
 } from './data.js';
 
 // Logged-in players get their own key (see cloud.js); guests use the plain one.
@@ -28,7 +28,7 @@ export const newDay = () => ({ orders: 0, revenue: 0, costs: 0, lost: 0, exp: {}
 
 export function newState() {
   return {
-    v: 5, money: 1500, gems: 5, xp: 0, level: 1,
+    v: 6, money: 1500, gems: 5, xp: 0, level: 1,
     time: 0, day: 1, dayTime: 0, eventT: 200, parcelT: 0, pickupAt: 0,
     stock: {}, everStocked: {}, priceMode: {}, sold: {},
     orders: [], nextId: 1,
@@ -40,9 +40,9 @@ export function newState() {
     returnsDue: [], returned: {}, waitAvg: 40,
     employees: [], candidates: [],
     boosts: [], trend: null, flop: null,
-    auto: { on: false, prio: ['pack', 'pick', 'stock', 'tickets', 'web'], off: [] }, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
+    auto: { on: true, prio: ['pack', 'pick', 'stock', 'tickets', 'web'], off: [] }, delayUntil: 0, campaign: null, campCd: {}, tickets: 0, ticketWork: 0,
     satisfaction: 80, parcels: 0,
-    loans: [], redDays: 0, bankrupt: false, boss: null, tiles: [], hideTips: false, hideQuest: false,
+    loans: [], redDays: 0, bankrupt: false, boss: null, tiles: [], walls: {}, hideTips: false, hideQuest: false,
     player: { x: 14, z: 7, carry: null },
     quest: 0,
     recentLost: [],
@@ -94,7 +94,10 @@ export function loadState() {
         s.v = 4;
       }
       if (v5) s.redDays = 0;
-      s.v = 5;
+      // v6: shelves take several tags instead of one product, and the boss is always on autopilot.
+      for (const f of s.furniture) if (f.type === 'shelf') { f.tags ??= f.only ? [f.only] : []; delete f.only; }
+      s.auto.on = true;
+      s.v = 6;
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;
       for (const o of s.orders) {
@@ -109,6 +112,8 @@ export function loadState() {
       for (const b of s.boxes) {
         if (b.carriedBy !== 'player') b.carriedBy = null;
         b.claimedBy = null;
+        // Items a stocker was moving between shelves land on the floor by the dock.
+        if (!b.carriedBy && b.slot == null && !b.at) b.at = { x: DELIVERY_SPOT.x, z: DELIVERY_SPOT.z - 0.4 };
       }
       return s;
     }
@@ -223,11 +228,36 @@ export function takeBox(s, box, who) {
 
 // Moves one unit from a box onto the shelves. Returns false if the warehouse is full.
 // ---------- per-shelf stock ----------
-// Each shelf keeps its own items (f.stock) and can be reserved for one product (f.only); s.stock is the sum.
+// Each shelf keeps its own items (f.stock) and can be tagged for some products (f.tags; none = anything); s.stock is the sum.
 export const shelfCap = (s) => upgVal(s, 'storage');
 const shelvesOf = (s) => s.furniture.filter((f) => f.type === 'shelf');
 export const shelfCount = (f) => Object.values(f.stock || {}).reduce((a, b) => a + b, 0);
-export const shelfAccepts = (s, f, pid) => (!f.only || f.only === pid) && shelfCount(f) < shelfCap(s);
+export const shelfAllows = (f, pid) => !f.tags?.length || f.tags.includes(pid);
+export const shelfAccepts = (s, f, pid) => shelfAllows(f, pid) && shelfCount(f) < shelfCap(s);
+
+// Items standing on the wrong shelf: on a shelf tagged for other things, or on an open shelf while a shelf
+// tagged for them has room. Returns the first such { f, pid, n } (n = how many can go), or null.
+export function misplaced(s) {
+  const sh = shelvesOf(s), cap = shelfCap(s);
+  const room = (pid, tagged) => sh.reduce((a, f) => a + (shelfAccepts(s, f, pid) && (!tagged || f.tags?.includes(pid)) ? cap - shelfCount(f) : 0), 0);
+  for (const f of sh) for (const [pid, n] of Object.entries(f.stock || {})) {
+    if (!n) continue;
+    const wrong = !shelfAllows(f, pid), free = wrong ? room(pid, false) : !f.tags?.length ? room(pid, true) : 0;
+    if (free > 0) return { f, pid, n: Math.min(n, free) };
+  }
+  return null;
+}
+
+// Take up to n of a product off a shelf as a box to carry elsewhere.
+export function takeFromShelf(s, f, pid, n, who) {
+  const k = Math.min(n, f.stock?.[pid] || 0);
+  if (k <= 0) return null;
+  f.stock[pid] -= k;
+  syncStock(s);
+  const box = { id: s.nextId++, productId: pid, qty: k, slot: null, carriedBy: who, move: true };
+  s.boxes.push(box);
+  return box;
+}
 export const shelfHasOrder = (s, f) => s.orders.some((o) => o.status === 'queued' && (f.stock?.[o.productId] || 0) > 0);
 
 export function syncStock(s) {
@@ -252,10 +282,11 @@ export function stockOne(s, box, f) {
   if (!f || !shelfAccepts(s, f, box.productId)) return false;
   putOnShelf(box.productId, f);
   syncStock(s);
-  s.everStocked[box.productId] = true;
-  s.stats.unitsStocked++;
   box.qty--;
   if (box.qty <= 0) s.boxes = s.boxes.filter((b) => b !== box);
+  if (box.move) return true; // just moved from another shelf
+  s.everStocked[box.productId] = true;
+  s.stats.unitsStocked++;
   addXP(s, 1);
   return true;
 }
@@ -359,6 +390,14 @@ export function refreshCandidates(s) {
     const x = pick(sp);
     s.candidates.unshift({ cid: s.nextId++, name: x.name, role: x.role, special: x.special, specialDesc: x.desc, look: randomLook(x.name), cost: ROLES[x.role].hire * 2 });
   }
+}
+
+// Give desk i to employee e; whoever sat there takes e's old desk.
+export function setDesk(s, i, e) {
+  const prev = s.employees.find((o) => o.desk === i);
+  if (prev === e) return;
+  if (prev) prev.desk = e.desk;
+  e.desk = i;
 }
 
 export function assignDesks(s) {

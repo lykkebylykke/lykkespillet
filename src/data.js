@@ -130,13 +130,20 @@ export const FURNITURE = {
   shelf: { name: 'Lagerreol', icon: '🧱', key: 'shelves', cost: SHELF_COST, lvl: SHELF_LVL, slots: SHELF_SLOTS, hx: 1.35, hz: 0.4, acc: 0.85, r: 0.85 },
   table: { name: 'Pakkebord', icon: '📦', key: 'tables', cost: TABLE_COST, lvl: TABLE_LVL, slots: TABLE_SLOTS, hx: 1.05, hz: 0.55, acc: 0.95, r: 0.85 },
   desk: { name: 'Skrivebord', icon: '🖥️', key: 'desks', cost: DESK_COST, lvl: DESK_LVL, slots: DESK_SLOTS, hx: 0.85, hz: 0.45, acc: 0.9, r: 0.8 },
-  // Decor has no work spot; it makes employees working nearby happier (joy points), and happy people work faster.
+  // Decor has no work spot; it makes employees happier (joy points), and happy people work faster.
+  // Plants and music work near where people work (same room, within ~7 m); break furniture (pause) works
+  // wherever it stands, because staff walk there on their breaks.
   plant: { name: 'Plante', icon: '🪴', decor: true, joy: 4, cost: [250, 250, 350, 350, 500, 500], lvl: [1, 1, 2, 2, 3, 3], hx: 0.3, hz: 0.3, acc: 0 },
-  coffee: { name: 'Kaffebar', icon: '☕', decor: true, joy: 8, cost: [1200], lvl: [2], hx: 0.6, hz: 0.35, acc: 0 },
-  sofa: { name: 'Sofa', icon: '🛋️', decor: true, joy: 6, cost: [1500, 2500], lvl: [3, 6], hx: 1.0, hz: 0.45, acc: 0 },
+  coffee: { name: 'Kaffebar', icon: '☕', decor: true, joy: 8, pause: true, cost: [1200], lvl: [2], hx: 0.6, hz: 0.35, acc: 0 },
+  sofa: { name: 'Sofa', icon: '🛋️', decor: true, joy: 6, pause: true, cost: [1500, 2500], lvl: [3, 6], hx: 1.0, hz: 0.45, acc: 0 },
   speaker: { name: 'Højttaler', icon: '🎵', decor: true, joy: 7, cost: [800], lvl: [4], hx: 0.3, hz: 0.3, acc: 0 },
-  foosball: { name: 'Bordfodbold', icon: '⚽', decor: true, joy: 8, cost: [3500], lvl: [5], hx: 0.75, hz: 0.45, acc: 0 },
+  foosball: { name: 'Bordfodbold', icon: '⚽', decor: true, joy: 8, pause: true, cost: [3500], lvl: [5], hx: 0.75, hz: 0.45, acc: 0 },
 };
+// Inner walls and doors (per 2 m segment); tearing down is free.
+export const WALL_COST = 150;
+export const DOOR_COST = 400;
+// A room with break furniture and no work stations in it.
+export const BREAK_ROOM_JOY = 6;
 export const BOX_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 11.8 + (i % 4) * 1.3, z: 2.2 + Math.floor(i / 4) * 1.3 }));
 export const DELIVERY_SPOT = { x: 13.75, z: 5.0 };
 export const PALLET = { x: 16.6, z: 15.7 };
@@ -233,11 +240,11 @@ const empCount = (s, role) => s.employees.filter((e) => e.role === role).length;
 // target: world hint for quest arrow, tab: UI hint
 export const QUESTS = [
   { text: 'Indret dit lager: placér starterkittet', goal: (s) => [s.furniture.length, 3], reward: { xp: 10 } },
-  { text: 'Saml kassen op ved varemodtagelsen', goal: (s) => [s.stats.boxesPicked, 1], reward: { xp: 10 }, target: 'delivery' },
-  { text: 'Læg T-shirts på lagerreolen', goal: (s) => [s.stats.unitsStocked, 10], reward: { xp: 10 }, target: 'shelf' },
-  { text: 'Vent på en ordre og hent varen på reolen', goal: (s) => [s.stats.itemsPicked, 1], reward: { xp: 10 }, target: 'shelf' },
-  { text: 'Pak ordren ved pakkebordet', goal: (s) => [s.stats.shipped, 1], reward: { money: 200 }, target: 'table' },
-  { text: 'Arbejd på webshoppen ved computeren', goal: (s) => [s.stats.webshopWork, 1], reward: { money: 100 }, target: 'desk' },
+  { text: 'Se chefen samle kassen op ved varemodtagelsen', goal: (s) => [s.stats.boxesPicked, 1], reward: { xp: 10 }, target: 'delivery' },
+  { text: 'Chefen lægger T-shirts på lagerreolen', goal: (s) => [s.stats.unitsStocked, 10], reward: { xp: 10 }, target: 'shelf' },
+  { text: 'Vent på en ordre – chefen henter varen på reolen', goal: (s) => [s.stats.itemsPicked, 1], reward: { xp: 10 }, target: 'shelf' },
+  { text: 'Chefen pakker ordren ved pakkebordet', goal: (s) => [s.stats.shipped, 1], reward: { money: 200 }, target: 'table' },
+  { text: 'Chefen arbejder på webshoppen ved computeren', goal: (s) => [s.stats.webshopWork, 1], reward: { money: 100 }, target: 'desk' },
   { text: 'Køb en kasse varer under Indkøb', goal: (s) => [s.stats.boxesBought, 1], reward: { money: 150 }, tab: 'buy' },
   { text: 'Send 10 ordrer', goal: (s) => [s.stats.shipped, 10], reward: { money: 300, gems: 2 } },
   { text: 'Køb og placér en ekstra lagerreol', goal: (s) => [s.shelves, 2], reward: { money: 300 }, tab: 'upgrades' },

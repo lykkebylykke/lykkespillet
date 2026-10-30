@@ -9,61 +9,40 @@ import { Creator } from './creator.js';
 import { startCloud } from './cloud.js';
 import { Autopilot } from './auto.js';
 
-// ---------- input: virtual joystick + keyboard ----------
+// ---------- input: drag / tap + keyboard ----------
+// The boss runs on autopilot, so a drag moves the camera (or a piece in build mode) and a tap opens what's under it.
 class Input {
   constructor(canvas) {
-    this.jx = 0; this.jy = 0; this.keys = new Set();
-    const joy = document.getElementById('joy'), knob = joy.querySelector('.knob');
-    // A quick tap walks to that spot (onTap); press-and-drag is a joystick.
-    // When onDrag is set (build mode) a drag goes there instead of the joystick.
-    let id = null, ox = 0, oy = 0, lx = 0, ly = 0, t0 = 0, dragging = false, holdTimer = 0;
-    const R = 55;
-    const showJoy = () => {
-      dragging = true;
-      const r = joy.parentElement.getBoundingClientRect();
-      joy.style.left = `${ox - r.left}px`; joy.style.top = `${oy - r.top}px`;
-      joy.classList.add('on');
-      knob.style.transform = 'translate(-50%,-50%)';
-    };
+    this.keys = new Set();
+    let id = null, ox = 0, oy = 0, lx = 0, ly = 0, t0 = 0, dragging = false;
     canvas.addEventListener('pointerdown', (e) => {
       this.onPress?.();
       id = e.pointerId; ox = lx = e.clientX; oy = ly = e.clientY; t0 = performance.now(); dragging = false;
-      clearTimeout(holdTimer);
-      holdTimer = setTimeout(() => id === e.pointerId && !dragging && !this.dragMode?.() && showJoy(), 220);
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener('pointermove', (e) => {
       if (e.pointerId !== id) return;
-      let dx = e.clientX - ox, dy = e.clientY - oy;
-      const d = Math.hypot(dx, dy);
-      if (this.dragMode?.()) {
-        if (!dragging && d < 10) return;
-        dragging = true;
-        this.onDrag?.(lx, ly, e.clientX, e.clientY, ox, oy);
-        lx = e.clientX; ly = e.clientY;
-        return;
-      }
-      if (!dragging) { if (d < 10) return; showJoy(); }
-      if (d > R) { dx *= R / d; dy *= R / d; }
-      this.jx = dx / R; this.jy = dy / R;
-      knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+      if (!dragging && Math.hypot(e.clientX - ox, e.clientY - oy) < 10) return;
+      dragging = true;
+      this.onDrag?.(lx, ly, e.clientX, e.clientY, ox, oy);
+      lx = e.clientX; ly = e.clientY;
     });
     const end = (e) => {
       if (e.pointerId !== id) return;
-      clearTimeout(holdTimer);
       if (e.type === 'pointerup' && !dragging && performance.now() - t0 < 350) this.onTap?.(e.clientX, e.clientY);
-      id = null; dragging = false; this.jx = this.jy = 0; joy.classList.remove('on');
+      if (e.type === 'pointerup' && dragging) this.onDragEnd?.();
+      id = null; dragging = false;
     };
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
-    addEventListener('keydown', (e) => this.keys.add(e.key.toLowerCase()));
+    addEventListener('keydown', (e) => { if (!e.target.closest?.('input')) this.keys.add(e.key.toLowerCase()); });
     addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     addEventListener('blur', () => this.keys.clear());
   }
 
-  // Screen-space stick → world direction for the isometric camera.
+  // Arrow keys / WASD → world direction for the isometric camera.
   get dir() {
-    let x = this.jx, y = this.jy;
+    let x = 0, y = 0;
     const k = this.keys;
     if (k.has('w') || k.has('arrowup')) y -= 1;
     if (k.has('s') || k.has('arrowdown')) y += 1;
@@ -106,15 +85,16 @@ function boot() {
   const builder = new Builder(world, s, player);
   const input = new Input(canvas);
   const auto = new Autopilot(world, s, player);
-  // On autopilot a drag (or WASD) moves the camera instead of the boss.
-  input.dragMode = () => builder.active || s.auto.on;
   // The game stays playable with a menu open; on a phone the menu covers the game, so touching it closes the menu.
   input.onPress = () => { if (ui.sheetOpen && innerWidth < 720) ui.open('home'); };
   input.onDrag = (ax, ay, bx, by, ox, oy) => (!builder.active ? auto.pan(world.screenToGround(ax, ay), world.screenToGround(bx, by)) : builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by), world.screenToGround(ox, oy)));
+  input.onDragEnd = () => builder.onDragEnd?.();
+  // Tap a shelf to set its tags, or a desk to choose who sits there.
   input.onTap = (cx, cy) => {
-    const p = world.screenToGround(cx, cy);
-    if (builder.active) builder.onTap(p);
-    else if (p && !s.auto.on) player.goTo(world.walkTarget(p));
+    if (builder.active) { builder.onTap(world.screenToGround(cx, cy)); return; }
+    const f = world.furnitureAt(cx, cy);
+    if (f?.type === 'shelf') ui.shelfMenu(f);
+    else if (f?.type === 'desk') ui.deskMenu(f);
   };
   window.__game = { s, world, player, crew, ui, builder, auto };
   // A brand-new shop starts by creating the boss, then placing the starter kit.
@@ -141,14 +121,13 @@ function boot() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (!creating) simUpdate(s, dt);
-    const still = creating || builder.active || s.auto.on;
-    if (s.auto.on && !builder.active) auto.panDir(input.dir, dt);
-    player.update(dt, still ? { x: 0, z: 0 } : input.dir);
+    if (!builder.active) auto.panDir(input.dir, dt);
+    player.update(dt, { x: 0, z: 0 });
     auto.update(dt);
     builder.update(player.pos);
     crew.update(dt);
     ui.update(dt);
-    world.update(dt, s.auto.on && !builder.active ? auto.focus() : builder.focus, builder.active ? null : ui.questTarget());
+    world.update(dt, !builder.active ? auto.focus() : builder.focus, builder.active ? null : ui.questTarget());
     world.render();
     if ((saveT += dt) > 5) { saveT = 0; saveState(s); }
     requestAnimationFrame(frame);

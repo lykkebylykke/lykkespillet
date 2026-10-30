@@ -1,6 +1,7 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner, PRODUCTS, TREND, RETURN_FREIGHT,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner, PRODUCTS, TREND, RETURN_FREIGHT, BREAK_ROOM_JOY, DELIVERY_SPOT, PALLET,
 } from './data.js';
+import { roomAt } from './rooms.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
   freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP, onDuty,
@@ -152,8 +153,14 @@ function stuck(s) {
 }
 
 // ---------- employee happiness ----------
-// Decor counts when it stands within this many metres of where the employee works.
+// Plants and music count when they stand in the same room as the work spot and within this many metres.
 const NEAR = 7;
+
+// Rooms that only hold break furniture (no shelves, tables or desks, and not the receiving or shipping floor).
+export function breakRooms(s) {
+  const work = new Set([DELIVERY_SPOT, PALLET, ...s.furniture.filter((f) => !FURNITURE[f.type].decor)].map((p) => roomAt(s, p.x, p.z)));
+  return new Set(s.furniture.filter((f) => FURNITURE[f.type].pause).map((f) => roomAt(s, f.x, f.z)).filter((r) => !work.has(r)));
+}
 const AREA = { packer: 'lager', stocker: 'lager', some: 'kontor', ecom: 'kontor', support: 'kontor' };
 const happyCache = new Map();
 
@@ -173,16 +180,19 @@ export function happiness(s, e) {
   if (e.tier) add(4 * e.tier, `⬆️ ${EMP_TIERS[e.tier].name}`);
   if (e.special) add(5, '✨ Elsker sit job');
   if (R.desk && e.desk == null) { add(-25, '🖥️ Intet skrivebord'); tips.unshift('🖥️ Køb et skrivebord til mig'); }
-  // Decor near the work spot
+  // Plants and music near the work spot; break furniture wherever it stands (they walk there on breaks).
   const spots = workSpots(s, e);
-  const near = (type) => s.furniture.filter((f) => f.type === type && spots.some((p) => Math.hypot(p.x - f.x, p.z - f.z) <= NEAR)).length;
+  const near = (type) => s.furniture.filter((f) => f.type === type && (FURNITURE[type].pause
+    || spots.some((p) => Math.hypot(p.x - f.x, p.z - f.z) <= NEAR && roomAt(s, p.x, p.z) === roomAt(s, f.x, f.z)))).length;
   const decor = [
-    ['plant', 3, '🪴 Planter', '🪴 Savner lidt grønt – sæt en plante tæt på'],
-    ['speaker', 1, '🎵 Musik', '🎵 Savner musik i området – sæt en højttaler tæt på'],
-    ['coffee', 1, '☕ Kaffe', '☕ Savner en kop kaffe – en kaffebar tæt på'],
-    ['sofa', 2, '🛋️ Pausested', '🛋️ Savner et sted at holde pause – en sofa tæt på'],
+    ['plant', 3, '🪴 Planter', '🪴 Savner lidt grønt – sæt en plante tæt på (i samme rum)'],
+    ['speaker', 1, '🎵 Musik', '🎵 Savner musik – sæt en højttaler tæt på (i samme rum)'],
+    ['coffee', 1, '☕ Kaffe', '☕ Savner en kop kaffe i pauserne – køb en kaffebar'],
+    ['sofa', 2, '🛋️ Pausested', '🛋️ Savner et sted at holde pause – køb en sofa'],
     ['foosball', 1, '⚽ Bordfodbold', '⚽ Et bordfodboldbord ville gøre pauserne sjovere'],
   ];
+  if (breakRooms(s).size) add(BREAK_ROOM_JOY, '🚪 Pauserum');
+  else if (s.furniture.some((f) => FURNITURE[f.type].pause)) tips.push('🚪 Byg vægge og en dør rundt om pausemøblerne – så får I et rigtigt pauserum');
   for (const [type, max, label, tip] of decor) {
     const n = Math.min(max, near(type));
     if (n) add(n * FURNITURE[type].joy, label);

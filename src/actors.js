@@ -3,9 +3,10 @@ import { mat, rbox, at, makeBox } from './world.js';
 import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, DOOR, productById, bossLook } from './data.js';
 import {
   bus, upgVal, shelfAccepts, shelfHasOrder, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
-  addBoost, addXP, activeCampaign, dutyOf,
+  addBoost, addXP, activeCampaign, dutyOf, shelfAllows, misplaced, takeFromShelf,
 } from './state.js';
-import { empEff } from './sim.js';
+import { empEff, breakRooms } from './sim.js';
+import { roomAt } from './rooms.js';
 
 const PLAYER_PACK = 1.6, EMP_PACK = 2.2;
 // Decor that's nice to spend a break by, and what the bubble shows there.
@@ -93,16 +94,8 @@ export class Player {
     this.tag = world.addLabel('name boss', '', () => this.pos.clone().setY(-0.05));
     this.setName(s.boss);
     this.heldTable = null;
-    document.getElementById('app').insertAdjacentHTML('beforeend', '<button id="dropbtn" class="fab" hidden>✋ Læg fra dig</button>');
-    this.dropBtn = document.getElementById('dropbtn');
-    this.dropBtn.addEventListener('click', () => this.drop());
-    // With a packer on the team the boss only picks orders after saying yes.
-    document.getElementById('app').insertAdjacentHTML('beforeend', `<div id="lbtns">
-      <button id="shelfbtn" class="fab" hidden>🏷️ Reolens varer</button><button id="pickbtn" class="fab" hidden>🛒 Pluk selv</button></div>`);
-    this.pickBtn = document.getElementById('pickbtn');
-    this.pickBtn.addEventListener('click', () => { this.pickOk = true; bus.emit('sfx', 'click'); });
-    this.shelfBtn = document.getElementById('shelfbtn');
-    this.shelfBtn.addEventListener('click', () => this.atShelf && bus.emit('shelfMenu', this.atShelf));
+    // The boss always runs on autopilot (auto.js); buttons for it go in here.
+    document.getElementById('app').insertAdjacentHTML('beforeend', '<div id="lbtns"></div>');
   }
 
   // Put down whatever we hold right in front of us; it stays there until someone picks it up.
@@ -220,7 +213,6 @@ export class Player {
       else { this.carry.orderIds = ids; setCarry(this.mesh, { kind: 'items', colors: ids.map((id) => productById[s.orders.find((o) => o.id === id).productId].color) }); }
     }
     if (!this.carry) setCarry(this.mesh, null);
-    if (this.dropBtn.hidden === !!this.carry) this.dropBtn.hidden = !this.carry;
 
     // zone (things on the floor come first)
     if (this.ignore) { const o = this.ignore.productId ? this.ignore.at : this.ignore; if (!o || Math.hypot(o.x - this.pos.x, o.z - this.pos.z) > 1) this.ignore = null; }
@@ -231,16 +223,12 @@ export class Player {
       if (d < z.r && d < best) { best = d; zone = z; }
     }
     if (zone !== this.zone) { this.zone = zone; this.prog = 0; this.pickOk = false; }
-    this.askPick = false;
     if (this.heldTable != null && !(zone?.type === 'table' && zone.idx === this.heldTable && this.carry?.kind === 'items')) {
       if (w.tableRes[this.heldTable] === 'player') w.tableRes[this.heldTable] = null;
       this.heldTable = null;
     }
 
     const act = this.act = floor ? this.pickupAction(floor) : zone ? this.actionFor(zone) : null;
-    if (this.pickBtn.hidden === this.askPick) this.pickBtn.hidden = !this.askPick;
-    this.atShelf = !floor && zone?.type === 'shelf' ? w.shelves[zone.idx]?.f : null;
-    if (this.shelfBtn.hidden === !!this.atShelf) this.shelfBtn.hidden = !this.atShelf;
     animateCharacter(this.mesh, this.t, this.moving, !!this.carry, act?.working && !this.moving);
     if (act && !act.blocked && act.dur) {
       this.prog += dt;
@@ -269,7 +257,7 @@ export class Player {
       const f = w.shelves[z.idx].f;
       if (c?.kind === 'box') {
         const box = s.boxes.find((b) => b.id === c.boxId), p = productById[box.productId];
-        if (f.only && f.only !== box.productId) return { label: `Reolen er kun til ${productById[f.only].icon} ${productById[f.only].name}`, blocked: true };
+        if (!shelfAllows(f, box.productId)) return { label: `Reolen er kun til ${f.tags.map((id) => productById[id].icon).join(' ')}`, blocked: true };
         if (!shelfAccepts(s, f, box.productId)) return { label: 'Reolen er fuld – prøv en anden', blocked: true };
         return {
           label: `Lægger ${p.icon} på reolen (${box.qty})`, dur: 0.12, working: true,
@@ -279,7 +267,6 @@ export class Player {
       if (!queuedCount(s)) return { label: c ? `Bær varerne til pakkebordet` : 'Ingen ordrer at plukke' };
       if (!shelfHasOrder(s, f)) return { label: c ? 'Bær varerne til pakkebordet' : 'Ordrerne skal bruge varer fra en anden reol' };
       if (room <= 0) return { label: 'Fuld – gå til pakkebordet', blocked: true };
-      if (!this.pickOk && !s.auto.on && s.employees.some((e) => e.role === 'packer')) { this.askPick = true; return { label: 'Pakkeren plukker ordrerne 📦' }; }
       return {
         label: 'Plukker vare til ordre', dur: 0.35, working: true,
         run: () => {
@@ -412,7 +399,10 @@ class Worker {
 
   *takeBreak() {
     const s = this.s;
-    const spots = s.furniture.filter((f) => BREAK[f.type]);
+    // A proper break room comes first.
+    const rooms = breakRooms(s), all = s.furniture.filter((f) => BREAK[f.type]), inRoom = all.filter((f) => rooms.has(roomAt(s, f.x, f.z)));
+    const spots = inRoom.length ? inRoom : all;
+    this.status = '☕';
     const f = spots.length ? spots[this.d.id % spots.length] : null;
     // Stand around the spot so people on a break don't pile up in one place.
     const a = (this.d.id * 2.4) % (Math.PI * 2), base = f ?? IDLE.office;
@@ -534,6 +524,8 @@ class Worker {
       if (!this.box) {
         const fits = (b) => w.shelves.some((sh) => shelfAccepts(s, sh.f, b.productId));
         const waiting = s.boxes.filter((b) => !b.carriedBy && !b.claimedBy), box = waiting.find(fits);
+        // Nothing to unpack: move items that stand on the wrong shelf over to their tagged shelf.
+        if (!box && (yield* this.tidy())) continue;
         if (!box) {
           this.status = !w.shelves.length ? '⚠️ Ingen reol' : waiting.length ? '⚠️ Ingen plads på reolerne' : '😴';
           yield* this.idle(IDLE.stocker);
@@ -543,8 +535,28 @@ class Worker {
         yield* this.fetchBox(box);
         continue;
       }
-      if (!(yield* this.shelveBox())) { this.status = '⚠️ Ingen plads på reolerne'; yield* this.wait(0.8); }
+      if (!(yield* this.shelveBox()) && this.box) { this.status = '⚠️ Ingen plads på reolerne'; yield* this.wait(0.8); }
     }
+  }
+
+  // Fetch items from a shelf they don't belong on; shelveBox then puts them where they belong.
+  *tidy() {
+    const s = this.s, w = this.w, m = misplaced(s);
+    if (!m) return false;
+    const sh = w.shelves.find((x) => x.f === m.f);
+    if (!sh) return false;
+    this.status = '🏷️';
+    const sp = w.spotOf(sh, this.pos.x, this.pos.z);
+    yield* this.walkTo(sp.ax, sp.az);
+    yield* this.face(sp.fx, sp.fz);
+    this.working = true;
+    yield* this.wait(0.6 / this.mult);
+    this.working = false;
+    // Someone may have picked some meanwhile; take what's still wrong.
+    const again = misplaced(s);
+    if (again?.f !== m.f || again.pid !== m.pid) return true;
+    this.box = takeFromShelf(s, m.f, m.pid, Math.min(again.n, 12), this.d.id);
+    return true;
   }
 
   // Walk to a box on the dock (or the floor) and pick it up. Shared by stockers and packers doing returns.
@@ -564,7 +576,7 @@ class Worker {
   // Fill the nearest shelf that takes the carried box. True while there's more to put away.
   *shelveBox() {
     const s = this.s, w = this.w, pid = this.box.productId;
-    const sh = w.nearestShelf(this.pos.x, this.pos.z, (x) => shelfAccepts(s, x.f, pid));
+    const sh = w.shelfFor(this.pos.x, this.pos.z, pid);
     this.working = false;
     if (!sh) {
       if (this.d.role === 'stocker') return false; // stockers wait for room
@@ -572,7 +584,7 @@ class Worker {
       this.box.carriedBy = null; this.box.at = { x: this.pos.x, z: this.pos.z }; this.box.slot = null; this.box = null;
       return false;
     }
-    this.status = this.d.role === 'packer' ? '↩️' : '';
+    this.status = this.d.role === 'packer' ? '↩️' : this.box.move ? '🏷️' : '';
     yield* this.walkTo(sh.ax, sh.az);
     yield* this.face(sh.fx, sh.fz);
     while (this.box.qty > 0 && shelfAccepts(s, sh.f, pid)) {
@@ -617,7 +629,7 @@ class Worker {
   destroy() {
     const s = this.s;
     releaseOrders(s, this.items);
-    if (this.box && s.boxes.includes(this.box)) this.box.carriedBy = null;
+    if (this.box && s.boxes.includes(this.box)) { this.box.carriedBy = null; if (this.box.slot == null) this.box.at = { x: this.pos.x, z: this.pos.z }; }
     for (const b of s.boxes) if (b.claimedBy === this.d.id) b.claimedBy = null;
     for (const d of s.drops) if (d.claimedBy === this.d.id) d.claimedBy = null;
     if (this.table != null) this.w.tableRes[this.table] = null;

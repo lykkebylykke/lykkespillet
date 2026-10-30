@@ -1,8 +1,8 @@
-// Autopilot: the boss works through the player's priority list on their own,
-// while the player pans the camera around and shops in the menus.
+// Autopilot: the boss always works through the player's priority list on their own,
+// while the player pans the camera around, taps shelves and desks, and shops in the menus.
 import * as THREE from 'three';
 import { AUTO_TASKS } from './data.js';
-import { bus, upgVal, shelfAccepts, shelfHasOrder, queuedCount, listed } from './state.js';
+import { upgVal, shelfHasOrder, queuedCount, listed } from './state.js';
 import { LOT } from './world.js';
 
 const dist = (a, x, z) => Math.hypot(a.x - x, a.z - z);
@@ -11,17 +11,17 @@ const nearest = (list, x, z) => list.reduce((best, o) => (!best || dist(o, x, z)
 export class Autopilot {
   constructor(world, s, player) {
     this.w = world; this.s = s; this.p = player;
-    this.t = 0; this.target = null; this.task = null; this.free = false; this.was = s.auto.on;
+    this.t = 0; this.target = null; this.task = null; this.free = false;
     this.cam = new THREE.Vector3();
     document.getElementById('lbtns').insertAdjacentHTML('afterbegin', `
       <button id="followbtn" class="fab" hidden>📍 Følg chefen</button>
-      <div id="autobtn" class="fab"><button data-act="auto"></button><button class="gear" data-act="autoSet" title="Prioriteter">⚙️</button></div>`);
-    this.btn = document.querySelector('#autobtn [data-act="auto"]');
+      <div id="autobtn" class="fab on"><button data-act="autoSet"></button><button class="gear" data-act="autoSet" title="Prioriteter">⚙️</button></div>`);
+    this.btn = document.querySelector('#autobtn button');
     this.followBtn = document.getElementById('followbtn');
     this.followBtn.addEventListener('click', () => { this.free = false; });
   }
 
-  get on() { return this.s.auto.on; }
+  get on() { return true; }
 
   // Dragging (or WASD) moves the camera freely while the boss works.
   pan(a, b) {
@@ -36,19 +36,11 @@ export class Autopilot {
   focus() { return this.on && this.free ? this.cam : this.p.pos; }
 
   update(dt) {
-    const s = this.s;
-    if (this.on !== this.was) {
-      this.was = this.on;
-      this.free = false; this.target = null; this.task = null;
-      this.p.stopPath();
-      bus.emit('toast', this.on ? '🤖 Autopilot slået til – træk for at se dig omkring' : '🎮 Du styrer selv chefen igen', 'good');
-    }
-    const task = this.task && this.on ? AUTO_TASKS[this.task] : null;
-    const label = this.on ? `🤖 ${task ? `${task.icon} ${task.name}` : 'Venter…'}` : '🤖 Autopilot';
+    const task = this.task ? AUTO_TASKS[this.task] : null;
+    const label = `👑 ${task ? `${task.icon} ${task.name}` : 'Venter…'}`;
     if (this.btn.textContent !== label) this.btn.textContent = label;
-    this.btn.parentElement.classList.toggle('on', this.on);
-    if (this.followBtn.hidden === (this.on && this.free)) this.followBtn.hidden = !(this.on && this.free);
-    if (!this.on || (this.t -= dt) > 0) return;
+    if (this.followBtn.hidden === this.free) this.followBtn.hidden = !this.free;
+    if ((this.t -= dt) > 0) return;
     this.t = 0.3;
     const goal = this.choose();
     this.task = goal?.task ?? null;
@@ -67,7 +59,7 @@ export class Autopilot {
     const s = this.s, w = this.w, c = s.player.carry, { x, z } = this.p.pos;
     const room = upgVal(s, 'trolley') - this.p.carriedOrders().length;
     const spot = (st) => { const sp = w.spotOf(st, x, z); return { x: sp.ax, z: sp.az }; };
-    const shelfFor = (box) => w.nearestShelf(x, z, (sh) => shelfAccepts(s, sh.f, box.productId));
+    const shelfFor = (box) => w.shelfFor(x, z, box.productId);
     const freeDesk = () => nearest(w.desks.filter((d) => !s.employees.some((e) => e.desk === d.i)).map(spot), x, z);
     const tasks = {
       pack: () => (c?.kind === 'items' ? nearest(w.tables.filter((t) => w.tableRes[t.i] == null || w.tableRes[t.i] === 'player').map(spot), x, z) : null),

@@ -8,7 +8,7 @@ npm run dev      # http://localhost:5173 (også på dit netværk – åbn på mo
 npm run build    # statisk build i dist/
 ```
 
-Styring: træk hvor som helst på skærmen (joystick) eller brug WASD/piletaster. Stil dig ved en station for at udføre handlingen.
+Chefen kører altid på autopilot efter en prioriteret opgaveliste. Træk i skærmen (eller brug WASD/piletaster) for at se dig omkring, og tryk på en reol (tags) eller et skrivebord (hvem der sidder der). Under 🛠️ Indret kan man flytte møbler, bygge vægge og døre og udvide lageret.
 
 | Fil | Indhold |
 | --- | --- |
@@ -16,9 +16,10 @@ Styring: træk hvor som helst på skærmen (joystick) eller brug WASD/piletaster
 | `src/state.js` | Spiltilstand, gem/indlæs (localStorage), fælles handlinger |
 | `src/sim.js` | Trafik, ordrer, leverancer, dage, events, flaskehals-rådgiver |
 | `src/world.js` | 3D-scene, stationer, labels, pathfinding |
+| `src/rooms.js` | Gulvfelter, indervægge og døre, og hvilke rum de danner |
 | `src/actors.js` | Spiller, medarbejder-AI (generator-baseret) |
 | `src/auto.js` | Autopilot: chefen arbejder selv efter en prioriteret opgaveliste |
-| `src/build.js` | Indretning: placér, flyt og drej møbler |
+| `src/build.js` | Indretning: placér, flyt og drej møbler, byg vægge og døre |
 | `src/creator.js` | Opret din chef: navn, køn, udseende og tøj ved nyt spil |
 | `src/ui.js` | HUD, faner, mål, notifikationer |
 | `src/cloud.js` | Login og gem i skyen (kun når spillet kører via serveren) |

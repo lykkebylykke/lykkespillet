@@ -4,7 +4,7 @@ import {
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign, ownedFurniture, returnRate, returnFactors, listed, slotNow, clockText, pauseOf, dutyOf,
+  spend, addMoney, addXP, resetState, activeCampaign, setDesk, ownedFurniture, returnRate, returnFactors, listed, slotNow, clockText, pauseOf, dutyOf,
 } from './state.js';
 import {
   effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, loanBlock, happiness, happyEff,
@@ -50,7 +50,6 @@ export class UI {
         </div>
         <div id="boosts"></div>
       </div>
-      <div id="joy"><div class="knob"></div></div>
       <div id="sheet" class="sheet"><div class="sheet-head"><h2 id="sheet-title"></h2><button class="x" data-act="tab:home">✕</button></div><div class="sheet-body" id="sheet-body"></div></div>
       <nav id="nav">${TABS.map(([id, ic, name]) => `<button data-act="tab:${id}" data-tab="${id}"><span>${ic}</span><small>${name}</small></button>`).join('')}</nav>
       <div id="toasts"></div>
@@ -133,7 +132,6 @@ export class UI {
     }
     if (cmd === 'ptab') this.prodTab = x;
     if (cmd === 'stab') this.staffTab = x;
-    if (cmd === 'auto') s.auto.on = !s.auto.on;
     if (cmd === 'autoSet') { this.staffTab = 'team'; this.open('staff'); return; }
     if (cmd === 'autoMove') {
       const L = s.auto.prio, i = L.indexOf(x), j = i + +y;
@@ -142,10 +140,20 @@ export class UI {
     if (cmd === 'autoOff') s.auto.off = s.auto.off.includes(x) ? s.auto.off.filter((k) => k !== x) : [...s.auto.off, x];
     if (cmd === 'qmin') s.hideQuest = x === '1';
     if (cmd === 'tips') s.hideTips = x === '0';
-    if (cmd === 'shelfOnly') {
+    if (cmd === 'shelfTag') {
       const f = s.furniture.find((o) => o.id === +x);
-      if (f) { f.only = y === 'all' ? null : y; this.w.rebuild(); this.toast(f.only ? `🏷️ Reolen er nu til ${productById[y].icon} ${productById[y].name}` : '🏷️ Reolen tager alle varer', 'good'); }
+      if (f) {
+        f.tags = y === 'all' ? [] : f.tags?.includes(y) ? f.tags.filter((k) => k !== y) : [...f.tags, y];
+        this.w.rebuild();
+        this.shelfMenu(f);
+      }
+      return;
+    }
+    if (cmd === 'deskOwner') {
+      const e = s.employees.find((o) => o.id === +y);
+      if (e) { setDesk(s, +x, e); this.toast(`🖥️ ${e.name} sidder nu ved skrivebord ${+x + 1}`, 'good'); }
       $('#modal').classList.remove('show');
+      this.renderSheet(true);
       return;
     }
     if (cmd === 'expand') { this.open('home'); bus.emit('expandStart'); return; }
@@ -208,13 +216,27 @@ export class UI {
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, ms);
   }
 
-  // Choose which product a shelf is for.
+  // Tag a shelf for one or more products (no tags = anything goes).
   shelfMenu(f) {
-    const s = this.s, opts = [['all', '📦', 'Alle varer'], ...PRODUCTS.filter((p) => p.lvl <= s.level).map((p) => [p.id, p.icon, p.name])];
+    const s = this.s, tags = f.tags || [];
+    const opts = PRODUCTS.filter((p) => p.lvl <= s.level || tags.includes(p.id));
     const on = Object.entries(f.stock || {}).filter(([, n]) => n).map(([id, n]) => `${productById[id].icon} ${n}`).join(' · ');
     $('#modal').innerHTML = `<div class="card-modal shelfmenu">
-      <h2>🏷️ Reolens varer</h2><p>Vælg hvad der skal stå på denne reol. Der står nu: ${on || 'ingenting'}</p>
-      <div class="opts">${opts.map(([id, ic, name]) => `<button class="chipbtn ${(f.only || 'all') === id ? 'on' : ''}" data-act="shelfOnly:${f.id}:${id}">${ic} ${name}</button>`).join('')}</div>
+      <h2>🏷️ Reolens tags</h2><p>Vælg de varer, reolen er til – gerne flere. Lagermedarbejderne fylder tagget reoler først og flytter varer, der står forkert, over på de rigtige reoler.</p>
+      <p><small>Der står nu: ${on || 'ingenting'}</small></p>
+      <div class="opts"><button class="chipbtn ${tags.length ? '' : 'on'}" data-act="shelfTag:${f.id}:all">📦 Alle varer</button>${opts.map((p) => `<button class="chipbtn ${tags.includes(p.id) ? 'on' : ''}" data-act="shelfTag:${f.id}:${p.id}">${p.icon} ${p.name}</button>`).join('')}</div>
+      <button class="btn" data-act="closeModal">Færdig</button></div>`;
+    $('#modal').classList.add('show');
+  }
+
+  // Choose who sits at a desk; they swap with whoever sat there.
+  deskMenu(f) {
+    const s = this.s, i = s.furniture.filter((o) => o.type === 'desk').indexOf(f);
+    const owner = s.employees.find((e) => e.desk === i), staff = s.employees.filter((e) => ROLES[e.role].desk);
+    const btn = (e) => `<button class="chipbtn ${e === owner ? 'on' : ''}" data-act="deskOwner:${i}:${e.id}">${ROLES[e.role].icon} ${esc(e.name)}${e.desk != null && e !== owner ? ` <small>(nr. ${e.desk + 1})</small>` : ''}</button>`;
+    $('#modal').innerHTML = `<div class="card-modal shelfmenu">
+      <h2>🖥️ Skrivebord ${i + 1}</h2><p>${owner ? `${esc(owner.name)} sidder her nu.` : 'Ledigt – chefen bruger det til kundeservice og webshoppen.'} Vælg hvem skrivebordet tilhører.</p>
+      <div class="opts">${staff.length ? staff.map(btn).join('') : '<small>Ingen kontorfolk ansat endnu.</small>'}</div>
       <button class="btn ghost" data-act="closeModal">Luk</button></div>`;
     $('#modal').classList.add('show');
   }
@@ -404,8 +426,7 @@ export class UI {
     }).join('');
     return `<div class="card autocard"><div class="av" style="background:#ffd166">👑</div>
       <div class="info"><b>${esc(s.boss?.name || 'Chefen')} <span class="tag gold">Chef</span></b>
-        <small>Autopilot: chefen arbejder selv efter listen – øverst først. Imens kan du trække i skærmen for at se dig omkring og købe ind.</small>
-        <button class="btn wide ${s.auto.on ? 'ok' : ''}" data-act="auto">${s.auto.on ? '🤖 Autopilot er TIL – tryk for at styre selv' : '🤖 Slå autopilot til'}</button>
+        <small>Chefen arbejder selv efter listen – øverst først. Træk i skærmen for at se dig omkring, og tryk på en reol eller et skrivebord for at indstille den.</small>
         <div class="aprios">${rows}</div></div></div>`;
   }
 
@@ -549,7 +570,8 @@ export class UI {
     const s = this.s;
     const card = ([type, F]) => {
       const n = ownedFurniture(s, type), max = F.cost.length, cost = F.cost[n], lvl = F.lvl[n];
-      const eff = F.decor ? `<small class="eff">😊 +${F.joy} glæde for ansatte tæt på (ca. 7 m)</small>` : '';
+      const eff = F.pause ? `<small class="eff">😊 +${F.joy} glæde · bruges i pauserne, virker hvor den står – gerne i et pauserum</small>`
+        : F.decor ? `<small class="eff">😊 +${F.joy} glæde for ansatte tæt på (i samme rum, ca. 7 m)</small>` : '';
       return `<div class="card"><div class="av">${F.icon}</div>
         <div class="info"><b>${F.name}</b><small>Du har ${n} af ${max}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small>${eff}</div>
         <div class="btns">${n >= max ? '<span class="tag gold">MAX</span>'
@@ -562,7 +584,7 @@ export class UI {
         <div class="info"><b>Mere plads</b><small>Lageret er ${fmt(90 + s.tiles.length)} felter · ${fmt((90 + s.tiles.length) * TILE * TILE)} m²</small>
           <small class="eff">${kr(TILE_COST)} pr. felt (${TILE}×${TILE} m) · husleje +${kr(TILE_RENT)}/dag pr. felt</small></div>
         <div class="btns"><button class="btn" data-act="expand">Udvid</button></div></div>
-      <h3>🪴 Hygge & trivsel</h3><p class="tip">Glade medarbejdere arbejder hurtigere. Pynten virker på dem, der arbejder tæt på den – se under 👥 Ansatte, hvad hver enkelt savner.</p>${all.filter(([, F]) => F.decor).map(card).join('')}
+      <h3>🪴 Hygge & trivsel</h3><p class="tip">Glade medarbejdere arbejder hurtigere. Planter og musik virker tæt på arbejdspladsen; sofa, kaffe og bordfodbold bruges i pauserne. Byg et pauserum med vægge og en dør (🛠️ Indret → 🧱 Vægge) for ekstra glæde.</p>${all.filter(([, F]) => F.decor).map(card).join('')}
       <h3>⬆️ Opgraderinger</h3>` +
       Object.entries(UPGRADES).map(([k, U]) => {
         const cur = U.levels[s.upg[k]], next = U.levels[s.upg[k] + 1];

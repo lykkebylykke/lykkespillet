@@ -1,14 +1,16 @@
 import * as THREE from 'three';
-import { FURNITURE, TILE_COST, TILE_RENT } from './data.js';
+import { FURNITURE, TILE_COST, TILE_RENT, WALL_COST, DOOR_COST } from './data.js';
 import { bus, syncFurniture, assignDesks, spend, kr } from './state.js';
 import { footprint, LOT, TILE, TILES, tileKey } from './world.js';
+import { edgeAt, edgeBox, isInnerEdge, TILE as T } from './rooms.js';
 
 const SNAP = 0.25;
 const snap = (v) => Math.round(v / SNAP) * SNAP;
 const $ = (sel) => document.querySelector(sel);
 
 // Placing and moving furniture, and buying floor space.
-// Modes: null (playing), 'edit' (pick something to move), 'place' (ghost follows the finger), 'expand' (drag over tiles to buy).
+// Modes: null (playing), 'edit' (pick something to move), 'place' (ghost follows the finger), 'expand' (drag over tiles to buy),
+// 'walls' (tap or drag along the tile edges to build walls and doors, or tear them down).
 export class Builder {
   constructor(world, s, player) {
     this.w = world; this.s = s; this.player = player;
@@ -48,7 +50,7 @@ export class Builder {
 
   // ---------- buttons ----------
   kit() { const type = Object.keys(this.s.kit).find((k) => this.s.kit[k] > 0); if (type) this.start(type); }
-  edit() { this.mode = 'edit'; this.setZoom(true); this.render(); }
+  edit() { this.clearTiles(); this.mode = 'edit'; this.setZoom(true); this.render(); }
   done() { this.clearTiles(); this.mode = null; this.setZoom(false); this.render(); }
   rotate() { this.p.rot = (this.p.rot + 1) % 4; this.validate(); }
   cancel() { this.clearGhost(); this.p = null; this.mode = this.wasEditing ? 'edit' : null; if (!this.mode) this.setZoom(false); this.render(); }
@@ -57,7 +59,7 @@ export class Builder {
     const s = this.s, p = this.p;
     if (!this.validate()) return;
     if (p.id == null) {
-      s.furniture.push({ id: s.nextId++, type: p.type, x: p.x, z: p.z, rot: p.rot });
+      s.furniture.push({ id: s.nextId++, type: p.type, x: p.x, z: p.z, rot: p.rot, ...(p.type === 'shelf' && { tags: [] }) });
       s.kit[p.type]--;
     } else Object.assign(s.furniture.find((f) => f.id === p.id), { x: p.x, z: p.z, rot: p.rot });
     syncFurniture(s);
@@ -132,6 +134,68 @@ export class Builder {
     this.drawTiles();
     this.render();
   }
+
+  // ---------- inner walls and doors ----------
+  walls() {
+    this.clearGhost();
+    this.p = null;
+    this.mode = 'walls';
+    this.tool ??= 'wall';
+    this.player.stopPath();
+    // Show the whole building: drag paints walls, so there's no panning here.
+    const ts = [[0, 0], [8, 9], ...this.s.tiles.map((k) => k.split(',').map(Number))];
+    const xs = ts.map(([i]) => i * TILE), zs = ts.map(([, j]) => j * TILE);
+    this.focus.set((Math.min(...xs) + Math.max(...xs) + TILE) / 2, 0, (Math.min(...zs) + Math.max(...zs) + TILE) / 2);
+    this.w.zoom = Math.max(0.45, Math.min(0.7, 13 / Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs))));
+    this.w.resize();
+    this.drawEdges();
+    this.render();
+  }
+  toolWall() { this.tool = 'wall'; this.render(); }
+  toolDoor() { this.tool = 'door'; this.render(); }
+  toolErase() { this.tool = 'erase'; this.render(); }
+
+  // Faint lines on every inner edge, so you can see where walls can go.
+  drawEdges() {
+    this.clearTiles();
+    this.tiles = new THREE.Group();
+    const m = new THREE.MeshBasicMaterial({ color: '#7d6bd6', transparent: true, opacity: 0.35, depthWrite: false });
+    const geo = { h: new THREE.PlaneGeometry(T - 0.3, 0.08), v: new THREE.PlaneGeometry(0.08, T - 0.3) };
+    for (let i = TILES.i0; i <= TILES.i1; i++) for (let j = TILES.j0; j <= TILES.j1; j++) for (const k of [`h:${i},${j}`, `v:${i},${j}`]) {
+      if (!isInnerEdge(this.s, k) || this.s.walls[k]) continue;
+      const b = edgeBox(k), line = new THREE.Mesh(k[0] === 'v' ? geo.v : geo.h, m);
+      line.rotation.x = -Math.PI / 2;
+      line.position.set((b.minX + b.maxX) / 2, 0.02, (b.minZ + b.maxZ) / 2);
+      this.tiles.add(line);
+    }
+    this.w.scene.add(this.tiles);
+  }
+
+  // Apply the current tool to the edge under a ground point (each edge once per stroke).
+  paint(g) {
+    const s = this.s, k = g && edgeAt(g.x, g.z, 0.6);
+    if (!k || this.stroke?.has(k)) return;
+    (this.stroke ??= new Set()).add(k);
+    const cur = s.walls[k];
+    if (this.tool === 'erase') {
+      if (!cur) return;
+      delete s.walls[k];
+    } else {
+      if (cur === this.tool) return;
+      const ok = this.w.canWall(k, this.tool);
+      if (!ok.ok) { this.warn(ok.why); return; }
+      const cost = this.tool === 'door' ? DOOR_COST : WALL_COST;
+      if (!spend(s, cost, 'invest')) { this.warn('Ikke nok penge 💸'); return; }
+      s.walls[k] = this.tool;
+    }
+    bus.emit('sfx', 'pop');
+    this.w.buildRoom();
+    this.w.rebuild();
+    this.drawEdges();
+    this.render();
+  }
+  warn(why) { if (this.warned !== why) { this.warned = why; bus.emit('toast', `🧱 ${why}`, 'bad'); } }
+  onDragEnd() { this.stroke = null; this.warned = null; }
 
   // ---------- placing ----------
   start(type, id = null) {
@@ -215,6 +279,7 @@ export class Builder {
     if (!g) return;
     if (this.mode === 'place') { this.moveTo(g.x, g.z); return; }
     if (this.mode === 'expand') { this.select(g, g); return; }
+    if (this.mode === 'walls') { this.paint(g); this.onDragEnd(); return; }
     // Edit mode: pick up the piece under the finger.
     let best = null, bd = Infinity;
     for (const f of this.s.furniture) {
@@ -230,13 +295,19 @@ export class Builder {
   onDrag(a, b, origin) {
     if (!a || !b) return;
     if (this.mode === 'expand') { if (origin) this.select(origin, b); return; }
+    if (this.mode === 'walls') {
+      // Paint along the edges between the last point and this one.
+      const n = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.25);
+      for (let k = 1; k <= n; k++) this.paint({ x: a.x + ((b.x - a.x) * k) / n, z: a.z + ((b.z - a.z) * k) / n });
+      return;
+    }
     if (this.mode === 'place') this.moveTo(this.p.rx + b.x - a.x, this.p.rz + b.z - a.z);
     else if (this.mode === 'edit') this.focus.set(THREE.MathUtils.clamp(this.focus.x - (b.x - a.x), LOT.x0, LOT.x1), 0, THREE.MathUtils.clamp(this.focus.z - (b.z - a.z), LOT.z0, LOT.z1));
   }
 
   update(playerPos) {
     if (this.mode === 'place') this.focus.set(this.p.rx, 0, this.p.rz);
-    else if (this.mode !== 'edit' && this.mode !== 'expand') this.focus.copy(playerPos);
+    else if (this.mode !== 'edit' && this.mode !== 'expand' && this.mode !== 'walls') this.focus.copy(playerPos);
     const n = this.kitCount();
     if (n !== this.shownKit) { this.shownKit = n; this.render(); }
   }
@@ -250,6 +321,12 @@ export class Builder {
     $('#buildfab').hidden = this.active;
     $('#buildbar').hidden = !this.active;
     if (!this.active) return;
+    if (this.mode === 'walls') {
+      const tool = (id, label) => `<button class="btn ${this.tool === id ? 'ok' : 'ghost'}" data-b="${id === 'wall' ? 'toolWall' : id === 'door' ? 'toolDoor' : 'toolErase'}">${label}</button>`;
+      $('#buildbar .bmsg').innerHTML = `<b>🧱 Vægge & døre</b> · Tryk eller træk langs de lilla streger · Væg ${kr(WALL_COST)} · Dør ${kr(DOOR_COST)} pr. ${T} m · Rive ned er gratis`;
+      $('#buildbar .bbtns').innerHTML = `${tool('wall', '🧱 Væg')}${tool('door', '🚪 Dør')}${tool('erase', '🔨 Riv ned')}<button class="btn ok" data-b="edit">Færdig</button>`;
+      return;
+    }
     if (this.mode === 'expand') {
       const n = this.sel.length;
       $('#buildbar .bmsg').innerHTML = !n ? `<b>📐 Udvid lageret</b> · Træk en firkant over de felter du vil købe · ${kr(TILE_COST)} pr. felt (${TILE}×${TILE} m)`
@@ -266,7 +343,7 @@ export class Builder {
         <button class="btn ok" data-b="confirm" ${this.ok ? '' : 'disabled'}>✓ Placér</button>`;
     } else {
       $('#buildbar .bmsg').innerHTML = '<b>🛠️ Indret</b> · Tryk på et møbel for at flytte eller dreje det';
-      $('#buildbar .bbtns').innerHTML = `${this.kitCount() ? '<button class="btn ghost" data-b="kit">📦 Placér nyt</button>' : ''}<button class="btn ghost" data-b="expand">📐 Udvid</button><button class="btn ok" data-b="done">Færdig</button>`;
+      $('#buildbar .bbtns').innerHTML = `${this.kitCount() ? '<button class="btn ghost" data-b="kit">📦 Placér nyt</button>' : ''}<button class="btn ghost" data-b="walls">🧱 Vægge</button><button class="btn ghost" data-b="expand">📐 Udvid</button><button class="btn ok" data-b="done">Færdig</button>`;
     }
   }
 }

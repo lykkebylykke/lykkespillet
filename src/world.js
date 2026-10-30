@@ -1,14 +1,13 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { BOX_SLOTS, DELIVERY_SPOT, PALLET, FURNITURE, PRODUCTS, productById } from './data.js';
-import { queuedCount, shelfCap, shelfCount } from './state.js';
+import { BOX_SLOTS, DELIVERY_SPOT, PALLET, DOOR, FURNITURE, PRODUCTS, productById } from './data.js';
+import { queuedCount, shelfCap, shelfCount, shelfAccepts } from './state.js';
+import { TILE, tileKey, isBaseTile, ownsTile, edgeBox, isInnerEdge, parseEdge } from './rooms.js';
 
 // The lot is split into 2×2 m tiles; the shop owns the original 18×20 m and can buy more (not towards the road).
-export const TILE = 2;
+export { TILE, tileKey, isBaseTile };
 export const LOT = { x0: -12, z0: -8, x1: 18, z1: 32 };
 export const TILES = { i0: LOT.x0 / TILE, j0: LOT.z0 / TILE, i1: LOT.x1 / TILE, j1: LOT.z1 / TILE };
-export const tileKey = (i, j) => `${i},${j}`;
-export const isBaseTile = (i, j) => i >= 0 && i < 9 && j >= 0 && j < 10;
 const CELL = 0.5, NX = (LOT.x1 - LOT.x0) / CELL, NZ = (LOT.z1 - LOT.z0) / CELL;
 const cellX = (c) => LOT.x0 + ((c % NX) + 0.5) * CELL, cellZ = (c) => LOT.z0 + (((c / NX) | 0) + 0.5) * CELL;
 
@@ -193,7 +192,7 @@ export class World {
   }
 
   // ---------- the room: owned 2×2 m tiles, floor, walls ----------
-  ownsTile(i, j) { return isBaseTile(i, j) || this.tileSet.has(tileKey(i, j)); }
+  ownsTile(i, j) { return ownsTile(this.s, i, j); }
   isFloor(x, z) { return this.ownsTile(Math.floor(x / TILE), Math.floor(z / TILE)); }
   // Every point of the box (grown by m) stands on our floor.
   boxOnFloor(b, m = 0) {
@@ -205,7 +204,6 @@ export class World {
 
   buildRoom() {
     const sc = this.scene, own = (i, j) => this.ownsTile(i, j);
-    this.tileSet = new Set(this.s.tiles);
     if (this.room) sc.remove(this.room);
     const g = (this.room = new THREE.Group());
     sc.add(g);
@@ -239,6 +237,22 @@ export class World {
     for (const z of [1, 5.5, 14, 17.5]) g.add(at(rbox(0.32, 2.4, 0.32, trim), 18.125, 1.2, z));
     g.add(at(rbox(0.32, 0.3, 4.8, trim), 18.125, 2.35, 3.25), at(rbox(0.32, 0.3, 3.8, trim), 18.125, 2.35, 15.75));
     walls.push({ minX: 18, maxX: 18.25, minZ: 0, maxZ: 20 });
+    // Inner walls (low, so you can see into the rooms) and doors (an opening between two posts).
+    this.doorways = [];
+    for (const [k, kind] of Object.entries(this.s.walls)) {
+      if (!isInnerEdge(this.s, k)) continue;
+      const { d } = parseEdge(k), b = edgeBox(k), cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2, hor = d === 'h';
+      const seg = (len, h, x, z, c) => at(hor ? rbox(len, h, 0.18, c, 0.04) : rbox(0.18, h, len, c, 0.04), x, h / 2, z);
+      if (kind === 'door') {
+        for (const s of [-1, 1]) g.add(seg(0.22, 1.5, cx + (hor ? s * 0.95 : 0), cz + (hor ? 0 : s * 0.95), trim));
+        g.add(hor ? plane(1.7, 0.3, '#e3d5c2', cx, cz, 0.006) : plane(0.3, 1.7, '#e3d5c2', cx, cz, 0.006));
+        this.doorways.push(edgeBox(k, 0.6));
+      } else {
+        g.add(seg(2.18, 1.0, cx, cz, wall));
+        g.add(at(hor ? rbox(2.2, 0.08, 0.24, trim, 0.03) : rbox(0.24, 0.08, 2.2, trim, 0.03), cx, 1.02, cz));
+        walls.push(b);
+      }
+    }
     // Shop sign on the back wall
     let jn = 0;
     while (own(2, jn - 1)) jn--;
@@ -260,13 +274,13 @@ export class World {
     if (p) this.marker.position.set(p.x, 0.03, p.z);
   }
 
-  screenToGround(cx, cy) {
+  screenToGround(cx, cy, y = 0) {
     const r = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
     this.ray ??= new THREE.Raycaster();
     this.ray.setFromCamera(ndc, this.camera);
     const p = new THREE.Vector3();
-    return this.ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p);
+    return this.ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), p);
   }
 
   inObstacle(x, z) {
@@ -414,7 +428,7 @@ export class World {
       this.stations.add(g);
       const fp = footprint(f.type, f.x, f.z, f.rot);
       if (!list) { this.obstacles.push(fp.box); continue; }
-      if (f.type === 'shelf' && f.only) g.add(this.shelfSign(f.only));
+      if (f.type === 'shelf' && f.tags?.length) g.add(this.shelfSign(f.tags));
       list.push({ i, id: f.id, f, type: f.type, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, spots: [{ ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz }], ...parts });
       this.obstacles.push(fp.box);
       this.zones.push({ type: f.type, idx: i, x: fp.ax, z: fp.az, r: FURNITURE[f.type].r });
@@ -428,16 +442,17 @@ export class World {
     }
     // One count label on top of each shelf (higher when it carries a product sign).
     for (const L of this.shelfLabels || []) L.remove();
-    this.shelfLabels = this.shelves.map((sh) => this.addLabel('bubble shelfqty', '', new THREE.Vector3(sh.x, sh.f.only ? 2.95 : 2.45, sh.z)));
+    this.shelfLabels = this.shelves.map((sh) => this.addLabel('bubble shelfqty', '', new THREE.Vector3(sh.x, sh.f.tags?.length ? 2.95 : 2.45, sh.z)));
     this.shelfSig = '';
     this.buildGrid();
   }
 
-  // A sign on top of a shelf reserved for one product, readable from both sides.
-  shelfSign(pid) {
-    const p = productById[pid], g = new THREE.Group();
+  // A sign on top of a shelf tagged for some products, readable from both sides.
+  shelfSign(tags) {
+    const ps = tags.map((id) => productById[id]).filter(Boolean), g = new THREE.Group();
+    const text = ps.length === 1 ? `${ps[0].icon} ${ps[0].name}` : ps.map((p) => p.icon).join(' ');
     for (const r of [0, Math.PI]) {
-      const t = textPlane(`${p.icon} ${p.name}`, 2.2, 0.42, { color: '#ffffff', bg: p.color });
+      const t = textPlane(text, 2.2, 0.42, { color: '#ffffff', bg: ps.length === 1 ? ps[0].color : '#7d6bd6' });
       t.rotation.y = r;
       t.position.z = r ? -0.02 : 0.02;
       g.add(t);
@@ -454,9 +469,16 @@ export class World {
     const others = this.s.furniture.filter((f) => f.id !== ignoreId).map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
     const solid = [...this.staticObstacles, ...others.map((o) => o.fp.box)];
     if ([...solid, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05))) return { ok: false, why: 'Der står noget i vejen' };
+    if (this.doorways.some((o) => overlaps(b, o))) return { ok: false, why: 'Den står i en døråbning' };
     if (!decor && solid.some((o) => inside(o, fp.ax, fp.az, 0.3))) return { ok: false, why: 'Der skal være plads foran' };
-    // Flood-fill from the receiving area: every access point must still be reachable.
-    const grid = this.makeGrid([...solid, b]), seen = new Uint8Array(NX * NZ);
+    const reach = this.reachable([...solid, b]);
+    if ((!decor && !reach(fp.ax, fp.az)) || others.some((o) => !FURNITURE[o.f.type].decor && !reach(o.fp.ax, o.fp.az))) return { ok: false, why: 'Det spærrer vejen' };
+    return { ok: true, fp };
+  }
+
+  // Flood-fill from the receiving area through these obstacles; returns a test for whether a point can be reached.
+  reachable(solid) {
+    const grid = this.makeGrid(solid), seen = new Uint8Array(NX * NZ);
     const start = this.cellOf(DELIVERY_SPOT.x, DELIVERY_SPOT.z), q = [start];
     seen[start] = 1;
     while (q.length) {
@@ -467,9 +489,35 @@ export class World {
       }
     }
     // The cell right at an access point can sit in the inflated margin, so accept a neighbour.
-    const reach = (ax, az) => [-0.5, 0, 0.5].some((dx) => [-0.5, 0, 0.5].some((dz) => seen[this.cellOf(ax + dx, az + dz)]));
-    if ((!decor && !reach(fp.ax, fp.az)) || others.some((o) => !FURNITURE[o.f.type].decor && !reach(o.fp.ax, o.fp.az))) return { ok: false, why: 'Det spærrer vejen' };
-    return { ok: true, fp };
+    return (ax, az) => [-0.5, 0, 0.5].some((dx) => [-0.5, 0, 0.5].some((dz) => seen[this.cellOf(ax + dx, az + dz)]));
+  }
+
+  // Can a wall (or door) go on this edge? Walls may not cut through furniture or shut anything in.
+  canWall(k, kind) {
+    const s = this.s;
+    if (!isInnerEdge(s, k)) return { ok: false, why: 'Vægge bygges inde i lageret' };
+    const b = edgeBox(k), fps = s.furniture.map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
+    if ([...this.fixedObstacles, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05))) return { ok: false, why: 'Her skal der være fri adgang' };
+    if (kind === 'door') return { ok: true };
+    if (fps.some((o) => overlaps(b, o.fp.box, 0.02))) return { ok: false, why: 'Der står et møbel i vejen' };
+    const reach = this.reachable([...this.staticObstacles, ...fps.map((o) => o.fp.box), b]);
+    const need = [...fps.filter((o) => !FURNITURE[o.f.type].decor).map((o) => [o.fp.ax, o.fp.az]), [DOOR.x - 0.6, DOOR.z], [PALLET.x - 1, PALLET.z]];
+    if (!need.every(([x, z]) => reach(x, z))) return { ok: false, why: 'Så kan man ikke komme rundt – sæt en dør' };
+    return { ok: true };
+  }
+
+  // The piece of furniture under a screen point (for tapping a shelf or desk). Furniture has height, so the
+  // tap ray is tested at a few heights, top first.
+  furnitureAt(cx, cy) {
+    for (const h of [1.6, 1.2, 0.8, 0.4, 0]) {
+      const g = this.screenToGround(cx, cy, h);
+      const f = g && this.s.furniture.find((o) => {
+        const b = footprint(o.type, o.x, o.z, o.rot).box;
+        return g.x > b.minX - 0.15 && g.x < b.maxX + 0.15 && g.z > b.minZ - 0.15 && g.z < b.maxZ + 0.15;
+      });
+      if (f) return f;
+    }
+    return null;
   }
 
   buildLabels() {
@@ -641,6 +689,12 @@ export class World {
       }
     }
     return best;
+  }
+
+  // Where to put a product: the nearest shelf tagged for it with room, otherwise the nearest open (untagged) shelf.
+  shelfFor(x, z, pid) {
+    const s = this.s;
+    return this.nearestShelf(x, z, (sh) => sh.f.tags?.includes(pid) && shelfAccepts(s, sh.f, pid)) ?? this.nearestShelf(x, z, (sh) => shelfAccepts(s, sh.f, pid));
   }
 
   // The side of a station closest to (x, z).
