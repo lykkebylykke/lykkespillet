@@ -1,5 +1,5 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, TABLE_SLOTS, runner, PRODUCTS, TREND, RETURN_FREIGHT, BREAK_ROOM_JOY, DELIVERY_SPOT, PALLET,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, runner, furnCost, furnLvl, PRODUCTS, TREND, RETURN_FREIGHT, BREAK_ROOM_JOY, DELIVERY_SPOT, PALLET,
 } from './data.js';
 import { roomAt } from './rooms.js';
 import {
@@ -45,7 +45,7 @@ export function startCampaign(s, c) {
 // Buys the next piece of furniture into the kit; the player then places it.
 export function buyFurniture(s, type) {
   const F = FURNITURE[type], n = ownedFurniture(s, type);
-  if (n >= F.cost.length || s.level < F.lvl[n] || !spend(s, F.cost[n], 'invest')) return false;
+  if (s.level < furnLvl(F, n) || !spend(s, furnCost(F, n), 'invest')) return false;
   s.kit[type] = (s.kit[type] || 0) + 1;
   addXP(s, 15);
   return true;
@@ -384,7 +384,7 @@ export function advisor(s) {
   if (lostQueue.length || q >= 6) {
     if (s.level >= ROLES.packer.lvl && s.employees.filter((e) => e.role === 'packer').length < s.tables)
       return { text: 'For mange ordrer i kø → ansæt en lagerpakker', tab: 'staff' };
-    if (s.tables < TABLE_SLOTS.length && s.level >= 3) return { text: 'Pakningen er flaskehalsen → køb et pakkebord mere', tab: 'upgrades' };
+    if (s.level >= 3) return { text: 'Pakningen er flaskehalsen → køb et pakkebord mere', tab: 'upgrades' };
     return { text: 'Pakning går for langsomt → opgrader pakkebordet', tab: 'upgrades' };
   }
   if (q <= 1 && stock > 5) {

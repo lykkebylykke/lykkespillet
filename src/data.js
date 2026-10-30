@@ -139,6 +139,10 @@ export const FURNITURE = {
   speaker: { name: 'Højttaler', icon: '🎵', decor: true, joy: 7, cost: [800], lvl: [4], hx: 0.3, hz: 0.3, acc: 0 },
   foosball: { name: 'Bordfodbold', icon: '⚽', decor: true, joy: 8, pause: true, cost: [3500], lvl: [5], hx: 0.75, hz: 0.45, acc: 0 },
 };
+// There is no limit on furniture: after the listed prices each extra piece costs 25 % more than the one before,
+// and it needs the last listed level.
+export const furnCost = (F, n) => n < F.cost.length ? F.cost[n] : Math.round(F.cost.at(-1) * 1.25 ** (n - F.cost.length + 1) / 50) * 50;
+export const furnLvl = (F, n) => F.lvl[Math.min(n, F.lvl.length - 1)];
 // Inner walls and doors (per 2 m segment); tearing down is free.
 export const WALL_COST = 150;
 export const DOOR_COST = 400;

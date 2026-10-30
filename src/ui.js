@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS, RETURN_FREIGHT, SHIFT,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS, RETURN_FREIGHT, SHIFT, furnCost, furnLvl,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
@@ -569,13 +569,12 @@ export class UI {
   r_upgrades() {
     const s = this.s;
     const card = ([type, F]) => {
-      const n = ownedFurniture(s, type), max = F.cost.length, cost = F.cost[n], lvl = F.lvl[n];
+      const n = ownedFurniture(s, type), cost = furnCost(F, n), lvl = furnLvl(F, n);
       const eff = F.pause ? `<small class="eff">😊 +${F.joy} glæde · bruges i pauserne, virker hvor den står – gerne i et pauserum</small>`
         : F.decor ? `<small class="eff">😊 +${F.joy} glæde for ansatte tæt på (i samme rum, ca. 7 m)</small>` : '';
       return `<div class="card"><div class="av">${F.icon}</div>
-        <div class="info"><b>${F.name}</b><small>Du har ${n} af ${max}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small>${eff}</div>
-        <div class="btns">${n >= max ? '<span class="tag gold">MAX</span>'
-          : s.level < lvl ? `<span class="tag">🔒 Lvl ${lvl}</span>`
+        <div class="info"><b>${F.name}</b><small>Du har ${n}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small>${eff}</div>
+        <div class="btns">${s.level < lvl ? `<span class="tag">🔒 Lvl ${lvl}</span>`
           : `<button class="btn" data-act="furn:${type}" ${s.money < cost ? 'disabled' : ''}>Køb<small>${kr(cost)}</small></button>`}</div></div>`;
     };
     const all = Object.entries(FURNITURE);
