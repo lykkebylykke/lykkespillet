@@ -8,6 +8,7 @@ import { Builder } from './build.js';
 import { Creator } from './creator.js';
 import { startCloud } from './cloud.js';
 import { Autopilot } from './auto.js';
+import { SPEEDS, FURNITURE } from './data.js';
 
 // ---------- input: drag / tap + keyboard ----------
 // The boss runs on autopilot, so a drag moves the camera (or a piece in build mode) and a tap opens what's under it.
@@ -35,7 +36,11 @@ class Input {
     };
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
-    addEventListener('keydown', (e) => { if (!e.target.closest?.('input')) this.keys.add(e.key.toLowerCase()); });
+    addEventListener('keydown', (e) => {
+      if (e.target.closest?.('input')) return;
+      this.keys.add(e.key.toLowerCase());
+      if (e.key === ' ') { e.preventDefault(); this.onSpace?.(); }
+    });
     addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
     addEventListener('blur', () => this.keys.clear());
   }
@@ -86,14 +91,17 @@ function boot() {
   const input = new Input(canvas);
   const auto = new Autopilot(world, s, player);
   // The game stays playable with a menu open; on a phone the menu covers the game, so touching it closes the menu.
-  input.onPress = () => { if (ui.sheetOpen && innerWidth < 720) ui.open('home'); };
+  input.onPress = () => { if (ui.sheetOpen && innerWidth < 720) ui.open('home'); ui.closePanel(); };
+  input.onSpace = () => ui.act('pause');
   input.onDrag = (ax, ay, bx, by, ox, oy) => (!builder.active ? auto.pan(world.screenToGround(ax, ay), world.screenToGround(bx, by)) : builder.onDrag(world.screenToGround(ax, ay), world.screenToGround(bx, by), world.screenToGround(ox, oy)));
   input.onDragEnd = () => builder.onDragEnd?.();
-  // Tap a shelf to set its tags, or a desk to choose who sits there.
+  // Tap someone to see them, a shelf to set its tags, or a desk to choose who sits there.
   input.onTap = (cx, cy) => {
     if (builder.active) { builder.onTap(world.screenToGround(cx, cy)); return; }
+    const g = world.screenToGround(cx, cy, 0.6), who = g && crew.at(g);
+    if (who) { ui.openEmp(who.id); return; }
     const f = world.furnitureAt(cx, cy);
-    if (f?.type === 'shelf') ui.shelfMenu(f);
+    if (f && FURNITURE[f.type].stores) ui.shelfMenu(f);
     else if (f?.type === 'desk') ui.deskMenu(f);
   };
   window.__game = { s, world, player, crew, ui, builder, auto };
@@ -120,14 +128,18 @@ function boot() {
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    if (!creating) simUpdate(s, dt);
+    // Game time stands still while paused or while a decision is on the screen; the camera and menus keep going.
+    const gdt = creating || s.paused || ui.modalOpen ? 0 : dt * SPEEDS[s.speed].scale;
+    if (gdt) {
+      simUpdate(s, gdt);
+      player.update(gdt, { x: 0, z: 0 });
+      auto.update(gdt);
+      crew.update(gdt);
+    }
     if (!builder.active) auto.panDir(input.dir, dt);
-    player.update(dt, { x: 0, z: 0 });
-    auto.update(dt);
     builder.update(player.pos);
-    crew.update(dt);
     ui.update(dt);
-    world.update(dt, !builder.active ? auto.focus() : builder.focus, builder.active ? null : ui.questTarget());
+    world.update(dt, gdt, !builder.active ? auto.focus() : builder.focus, builder.active ? null : ui.questTarget());
     world.render();
     if ((saveT += dt) > 5) { saveT = 0; saveState(s); }
     requestAnimationFrame(frame);

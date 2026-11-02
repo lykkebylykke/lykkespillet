@@ -8,13 +8,16 @@ npm run dev      # http://localhost:5173 (også på dit netværk – åbn på mo
 npm run build    # statisk build i dist/
 ```
 
-Chefen kører altid på autopilot efter en prioriteret opgaveliste. Træk i skærmen (eller brug WASD/piletaster) for at se dig omkring, og tryk på en reol (tags) eller et skrivebord (hvem der sidder der). Under 🛠️ Indret kan man flytte møbler, bygge vægge og døre og udvide lageret.
+Chefen kører altid på autopilot efter en prioriteret opgaveliste. Træk i skærmen (eller brug WASD/piletaster) for at se dig omkring, og tryk på en ansat, en reol (tags) eller et skrivebord (hvem der sidder der). Under fanen 🛠️ Indret kan man flytte møbler, bygge vægge og døre, male rum og udvide lageret.
+
+Overst i skærmen kan spillet sættes på pause (eller med mellemrum) og skifte fart: en dag varer 6, 3 eller 1½ minut. 🔔 folder overblikket ud: mål, tip, kalender og beskeder.
 
 | Fil | Indhold |
 | --- | --- |
 | `src/data.js` | Al balancering: produkter, roller, upgrades, mål, layout |
 | `src/state.js` | Spiltilstand, gem/indlæs (localStorage), fælles handlinger |
 | `src/sim.js` | Trafik, ordrer, leverancer, dage, events, flaskehals-rådgiver |
+| `src/events.js` | Udfordringer: valgkort, firmaordrer og kalenderen med sæsoner og moms |
 | `src/world.js` | 3D-scene, stationer, labels, pathfinding |
 | `src/rooms.js` | Gulvfelter, indervægge og døre, og hvilke rum de danner |
 | `src/actors.js` | Spiller, medarbejder-AI (generator-baseret) |

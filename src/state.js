@@ -1,6 +1,6 @@
 import {
   PRODUCTS, productById, PRICE_MODES, ROLES, EMP_TIERS, SPECIALS, NAMES, ROSTER, SKINS, HAIRS, SHIRTS,
-  UPGRADES, BOX_SLOTS, DELIVERY_SPOT, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS, AUTO_TASKS, SHIFT, DAY_LENGTH,
+  UPGRADES, BOX_SLOTS, DELIVERY_SPOT, MAX_LEVEL, xpFor, PACKAGING, FREIGHT, FURNITURE, DEFAULT_BOSS, AUTO_TASKS, SHIFT, DAY_LENGTH, SEASONS, HELP_JOBS,
 } from './data.js';
 
 // Logged-in players get their own key (see cloud.js); guests use the plain one.
@@ -28,14 +28,14 @@ export const newDay = () => ({ orders: 0, revenue: 0, costs: 0, lost: 0, exp: {}
 
 export function newState() {
   return {
-    v: 6, money: 1500, gems: 5, xp: 0, level: 1,
+    v: 7, money: 1500, gems: 5, xp: 0, level: 1,
     time: 0, day: 1, dayTime: 0, eventT: 200, parcelT: 0, pickupAt: 0,
     stock: {}, everStocked: {}, priceMode: {}, sold: {},
     orders: [], nextId: 1,
     boxes: [{ id: 0, productId: 'tshirt', qty: 10, slot: 0 }],
     deliveries: [],
     // Placed furniture; `kit` holds bought pieces still waiting to be placed (the starter kit at first).
-    furniture: [], kit: { shelf: 1, table: 1, desk: 1 }, drops: [], shelves: 0, tables: 0, desks: 0,
+    furniture: [], kit: { shelf: 1, table: 1, desk: 1 }, drops: [], shelves: 0, racks: 0, tables: 0, desks: 0,
     upg: { packTable: 0, computer: 0, storage: 0, webshop: 0, shoes: 0, trolley: 0, returns: 0 },
     returnsDue: [], returned: {}, waitAvg: 40,
     employees: [], candidates: [],
@@ -46,9 +46,13 @@ export function newState() {
     player: { x: 14, z: 7, carry: null },
     quest: 0,
     recentLost: [],
+    speed: 'normal', paused: false,
+    // Challenges (events.js): the decision card on the table, what it left behind, the calendar and the chapters.
+    card: null, cardT: 100, cardSeen: [], contract: null, season: null, seasonIn: null, chapter: 0, taxFrom: 0,
+    outage: null, broken: null, compete: null, defect: null, alarm: false, morale: null, paint: {},
     stats: {
       shipped: 0, revenue: 0, lost: 0, boxesPicked: 0, unitsStocked: 0, itemsPicked: 0,
-      webshopWork: 0, boxesBought: 0, returns: 0, campaigns: 0, ticketsSolved: 0, history: [],
+      webshopWork: 0, boxesBought: 0, returns: 0, campaigns: 0, ticketsSolved: 0, seasonsWon: 0, contracts: 0, history: [],
       exp: {}, today: newDay(),
     },
   };
@@ -85,10 +89,10 @@ export function loadState() {
       syncFurniture(s);
       // v3 had one shared stock; spread it over the shelves.
       if (s.v < 4) {
-        const sh = shelvesOf(s), cap = shelfCap(s);
+        const sh = shelvesOf(s);
         let k = 0;
         for (const [pid, n] of Object.entries(s.stock)) for (let u = 0; u < n; u++) {
-          while (k < sh.length - 1 && shelfCount(sh[k]) >= cap) k++;
+          while (k < sh.length - 1 && shelfCount(sh[k]) >= capOf(s, sh[k])) k++;
           if (sh[k]) putOnShelf(pid, sh[k]);
         }
         s.v = 4;
@@ -97,7 +101,9 @@ export function loadState() {
       // v6: shelves take several tags instead of one product, and the boss is always on autopilot.
       for (const f of s.furniture) if (f.type === 'shelf') { f.tags ??= f.only ? [f.only] : []; delete f.only; }
       s.auto.on = true;
-      s.v = 6;
+      // v7: VAT is settled from now on, not on everything sold so far.
+      if (s.v < 7) s.taxFrom = s.stats.revenue;
+      s.v = 7;
       // Runtime claims don't survive a reload; employees restart their tasks.
       const pc = s.player.carry;
       for (const o of s.orders) {
@@ -137,15 +143,15 @@ export function resetState() {
 
 // ---------- derived values ----------
 export const upgVal = (s, key) => UPGRADES[key].levels[s.upg[key]].val;
-export const capacity = (s) => s.shelves * upgVal(s, 'storage');
+export const capacity = (s) => shelvesOf(s).reduce((a, f) => a + capOf(s, f), 0);
 export const stockTotal = (s) => Object.values(s.stock).reduce((a, b) => a + b, 0);
 export const listed = (s) => PRODUCTS.filter((p) => p.lvl <= s.level && s.everStocked[p.id]);
 export const activeCampaign = (s) => (s.campaign && s.campaign.until > s.time ? s.campaign : null);
-export const unitPrice = (s, p) => Math.round(p.price * PRICE_MODES[s.priceMode[p.id] || 'normal'].price * (activeCampaign(s)?.price ?? 1));
+export const unitPrice = (s, p) => Math.round(p.price * PRICE_MODES[s.priceMode[p.id] || 'normal'].price * (activeCampaign(s)?.price ?? 1) * (s.compete?.until > s.time ? s.compete.price : 1));
 // Units on the shelf not yet promised to a queued order.
 export const available = (s, id) => (s.stock[id] || 0) - s.orders.filter((o) => o.productId === id && o.status === 'queued').length;
 export const queuedCount = (s) => s.orders.filter((o) => o.status === 'queued').length;
-export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1) * (e.shift ? (e.shift.b - e.shift.a) / SHIFT.max : 1));
+export const salaryOf = (e) => Math.round(ROLES[e.role].salary * EMP_TIERS[e.tier].sal * (e.special ? 1.3 : 1) * (e.raise || 1) * (e.shift ? (e.shift.b - e.shift.a) / SHIFT.max : 1));
 
 // ---------- shifts ----------
 // A shift is the half-hour slots [a, b) of the working day; the break sits in the middle of it.
@@ -157,12 +163,18 @@ export const clockText = (slot) => {
 export const pauseOf = (sh) => { const len = (sh.b - sh.a) * SHIFT.pause, a = (sh.a + sh.b) / 2 - len / 2; return { a, b: a + len }; };
 export function dutyOf(s, e) {
   const sh = e.shift, t = slotNow(s);
+  if (e.awayDay >= s.day) return 'off'; // on holiday or sent home
   if (!sh) return 'work';
   if (t < sh.a || t >= sh.b) return 'off';
   const p = pauseOf(sh);
   return t >= p.a && t < p.b ? 'pause' : 'work';
 }
 export const onDuty = (s, e) => dutyOf(s, e) === 'work';
+// Doing their own job right now (not helping out elsewhere).
+export const atOwnJob = (s, e) => onDuty(s, e) && !e.help;
+export const activeSeason = (s) => (s.season ? SEASONS.find((x) => x.id === s.season.id) : null);
+// Which temporary jobs someone could help with (not the one that is already theirs).
+export const helpOptions = (e) => Object.keys(HELP_JOBS).filter((k) => HELP_JOBS[k].role !== e.role);
 // New staff get an early or a late shift, whichever their role has fewest of.
 export function defaultShift(s, role) {
   const same = s.employees.filter((e) => e.role === role && e.shift), early = same.filter((e) => e.shift.a === 0).length;
@@ -229,17 +241,17 @@ export function takeBox(s, box, who) {
 // Moves one unit from a box onto the shelves. Returns false if the warehouse is full.
 // ---------- per-shelf stock ----------
 // Each shelf keeps its own items (f.stock) and can be tagged for some products (f.tags; none = anything); s.stock is the sum.
-export const shelfCap = (s) => upgVal(s, 'storage');
-const shelvesOf = (s) => s.furniture.filter((f) => f.type === 'shelf');
+export const capOf = (s, f) => upgVal(s, 'storage') * (FURNITURE[f.type].capMult || 1);
+const shelvesOf = (s) => s.furniture.filter((f) => FURNITURE[f.type].stores);
 export const shelfCount = (f) => Object.values(f.stock || {}).reduce((a, b) => a + b, 0);
 export const shelfAllows = (f, pid) => !f.tags?.length || f.tags.includes(pid);
-export const shelfAccepts = (s, f, pid) => shelfAllows(f, pid) && shelfCount(f) < shelfCap(s);
+export const shelfAccepts = (s, f, pid) => shelfAllows(f, pid) && shelfCount(f) < capOf(s, f);
 
 // Items standing on the wrong shelf: on a shelf tagged for other things, or on an open shelf while a shelf
 // tagged for them has room. Returns the first such { f, pid, n } (n = how many can go), or null.
 export function misplaced(s) {
-  const sh = shelvesOf(s), cap = shelfCap(s);
-  const room = (pid, tagged) => sh.reduce((a, f) => a + (shelfAccepts(s, f, pid) && (!tagged || f.tags?.includes(pid)) ? cap - shelfCount(f) : 0), 0);
+  const sh = shelvesOf(s);
+  const room = (pid, tagged) => sh.reduce((a, f) => a + (shelfAccepts(s, f, pid) && (!tagged || f.tags?.includes(pid)) ? capOf(s, f) - shelfCount(f) : 0), 0);
   for (const f of sh) for (const [pid, n] of Object.entries(f.stock || {})) {
     if (!n) continue;
     const wrong = !shelfAllows(f, pid), free = wrong ? room(pid, false) : !f.tags?.length ? room(pid, true) : 0;
@@ -257,6 +269,14 @@ export function takeFromShelf(s, f, pid, n, who) {
   const box = { id: s.nextId++, productId: pid, qty: k, slot: null, carriedBy: who, move: true };
   s.boxes.push(box);
   return box;
+}
+// Take up to n items not promised to an order off the shelves (stolen, given away…). Returns how many went.
+export function takeStock(s, pid, n) {
+  let left = Math.min(n, Math.max(0, available(s, pid)));
+  const taken = left;
+  for (const f of shelvesOf(s)) { const k = Math.min(left, f.stock?.[pid] || 0); if (k) { f.stock[pid] -= k; left -= k; } }
+  syncStock(s);
+  return taken;
 }
 export const shelfHasOrder = (s, f) => s.orders.some((o) => o.status === 'queued' && (f.stock?.[o.productId] || 0) > 0);
 
@@ -332,9 +352,11 @@ export function returnFactors(s, wait = s.waitAvg) {
   f.push([`😊 Kundetilfredshed ${Math.round(s.satisfaction)} %`, sat, s.satisfaction < 75 && '😊 Gladere kunder sender færre varer retur']);
   const speed = wait < 45 ? 0.9 : wait < 90 ? 1 : 1.4;
   f.push([wait < 45 ? '⚡ Hurtig levering' : wait < 90 ? '🚚 Normal levering' : '🐌 Langsom levering', speed, wait >= 45 && '⚡ Pak ordrerne hurtigere – sene pakker sendes oftere retur']);
+  const season = activeSeason(s);
+  if (season?.ret) f.push([`${season.icon} ${season.name}`, season.ret, false]);
   return f;
 }
-export const returnRate = (s, p, wait) => Math.min(0.6, returnFactors(s, wait).reduce((a, [, m]) => a * m, p.ret));
+export const returnRate = (s, p, wait) => Math.min(0.6, returnFactors(s, wait).reduce((a, [, m]) => a * m, p.ret) * (s.defect?.id === p.id && s.defect.until >= s.day ? 2 : 1));
 
 export function shipOrder(s, id, pos) {
   const o = s.orders.find((x) => x.id === id);
@@ -351,10 +373,13 @@ export function shipOrder(s, id, pos) {
   s.stats.today.revenue += rev;
   s.sold[p.id] = (s.sold[p.id] || 0) + 1;
   const wait = s.time - o.t;
-  s.satisfaction = Math.max(0, Math.min(100, s.satisfaction + (wait < 45 ? 0.6 : wait < 90 ? 0.1 : -1.5)));
-  s.waitAvg = s.waitAvg * 0.9 + wait * 0.1;
+  // A company order is judged on its deadline, not on how long each piece waited.
+  if (o.b2b) { if (s.contract) s.contract.done++; } else {
+    s.satisfaction = Math.max(0, Math.min(100, s.satisfaction + (wait < 45 ? 0.6 : wait < 90 ? 0.1 : -1.5)));
+    s.waitAvg = s.waitAvg * 0.9 + wait * 0.1;
+  }
   // Some parcels come back; they arrive with tomorrow morning's truck.
-  if (Math.random() < returnRate(s, p, wait)) s.returnsDue.push({ pid: p.id, rev });
+  if (!o.b2b && Math.random() < returnRate(s, p, wait)) s.returnsDue.push({ pid: p.id, rev });
   s.parcels++;
   if (Math.random() < 0.1) s.tickets++; // some customers write in
   addXP(s, 10 + Math.round(p.price / 40));

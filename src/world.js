@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { BOX_SLOTS, DELIVERY_SPOT, PALLET, DOOR, FURNITURE, PRODUCTS, productById } from './data.js';
-import { queuedCount, shelfCap, shelfCount, shelfAccepts } from './state.js';
-import { TILE, tileKey, isBaseTile, ownsTile, edgeBox, isInnerEdge, parseEdge } from './rooms.js';
+import { BOX_SLOTS, DELIVERY_SPOT, PALLET, DOOR, FURNITURE, PRODUCTS, productById, DAY_LENGTH } from './data.js';
+import { queuedCount, capOf, shelfCount, shelfAccepts } from './state.js';
+import { TILE, tileKey, isBaseTile, ownsTile, edgeBox, edgeTiles, isInnerEdge, parseEdge } from './rooms.js';
 
 // The lot is split into 2×2 m tiles; the shop owns the original 18×20 m and can buy more (not towards the road).
 export { TILE, tileKey, isBaseTile };
@@ -62,6 +62,18 @@ function plane(w, d, color, x, z, y = 0) {
   return m;
 }
 
+// The sky over the working day (f: how far through the day). glow: how much the building's lights are on.
+const col = (c) => new THREE.Color(c);
+const SKY = [
+  { f: 0, bg: col('#f6cfa9'), sun: col('#ffcf9c'), sunI: 1.4, sky: col('#ffe9d6'), skyI: 1.3, glow: 0.05 },
+  { f: 0.2, bg: col('#bde3f7'), sun: col('#fff4e0'), sunI: 2.2, sky: col('#ffffff'), skyI: 1.6, glow: 0 },
+  { f: 0.62, bg: col('#bde3f7'), sun: col('#fff4e0'), sunI: 2.2, sky: col('#ffffff'), skyI: 1.6, glow: 0 },
+  { f: 0.8, bg: col('#f7b98b'), sun: col('#ffb070'), sunI: 1.7, sky: col('#ffe0c4'), skyI: 1.35, glow: 0.2 },
+  { f: 0.92, bg: col('#5f5a9c'), sun: col('#ff7f6b'), sunI: 0.6, sky: col('#a9a3e0'), skyI: 1.05, glow: 0.65 },
+  { f: 1, bg: col('#1d2050'), sun: col('#7b8cff'), sunI: 0.25, sky: col('#8d92d8'), skyI: 0.95, glow: 1 },
+];
+const GRASS = col('#a7d99b'), GRASS_NIGHT = col('#22384d'), ROAD = col('#8e95a3'), ROAD_NIGHT = col('#2c3148');
+
 // Areas furniture may not cover: the receiving floor and the parcel pallet.
 const KEEP_CLEAR = [{ minX: 11, maxX: 16.6, minZ: 1.4, maxZ: 6.2 }, { minX: PALLET.x - 1.1, maxX: 18, minZ: PALLET.z - 1.1, maxZ: PALLET.z + 1.1 }];
 const overlaps = (a, b, m = 0) => a.minX < b.maxX + m && a.maxX > b.minX - m && a.minZ < b.maxZ + m && a.maxZ > b.minZ - m;
@@ -91,7 +103,8 @@ export class World {
     this.camTarget = new THREE.Vector3(s.player.x, 0, s.player.z);
     this.zoom = 1;
 
-    this.scene.add(new THREE.HemisphereLight('#ffffff', '#c8b9a6', 1.6));
+    this.hemi = new THREE.HemisphereLight('#ffffff', '#c8b9a6', 1.6);
+    this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight('#fff4e0', 2.2);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -105,6 +118,22 @@ export class World {
     this.tableRes = [];
     this.tablePacking = [];
     this.deskActive = [];
+    this.tableProg = [];
+    this.useActive = {};
+    this.seatBy = new Map();
+    this.glow = 0;
+    this.sunF = 0.3;
+    this.lit = new Set();
+    // Soft pools of light on the floor (lamps), all fading in together at dusk.
+    const gc = document.createElement('canvas');
+    gc.width = gc.height = 128;
+    const gg = gc.getContext('2d'), grad = gg.createRadialGradient(64, 64, 2, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,214,140,0.9)');
+    grad.addColorStop(1, 'rgba(255,214,140,0)');
+    gg.fillStyle = grad;
+    gg.fillRect(0, 0, 128, 128);
+    this.glowMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(gc), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.bulbMat = new THREE.MeshStandardMaterial({ color: '#fff3c9', emissive: '#ffd27a', emissiveIntensity: 0 });
     this.boxMeshes = new Map();
     this._v = new THREE.Vector3();
     this.cw = 1; this.ch = 1;
@@ -137,8 +166,15 @@ export class World {
   buildStatic() {
     const sc = this.scene;
     this.staticObstacles = [];
-    sc.add(plane(160, 160, '#a7d99b', 9, 10, -0.03));
-    sc.add(plane(3.6, 160, '#8e95a3', 20.8, 10, -0.02));
+    const grass = plane(160, 160, '#a7d99b', 9, 10, -0.03), road = plane(3.6, 160, '#8e95a3', 20.8, 10, -0.02);
+    grass.material = this.grassMat = grass.material.clone();
+    road.material = this.roadMat = road.material.clone();
+    sc.add(grass, road);
+    // Street lamps along the road
+    for (const z of [-4, 10, 24]) {
+      sc.add(at(rbox(0.12, 3, 0.12, '#5c677d', 0.03), 19.1, 1.5, z), at(rbox(0.5, 0.12, 0.26, this.bulbMat, 0.04), 19.3, 3, z));
+      sc.add(this.glowDisc(19.5, z, 3.2));
+    }
     for (let z = -60; z < 80; z += 3) sc.add(plane(0.18, 1.4, '#f1f1f1', 20.8, z, -0.015));
     sc.add(plane(1.6, 4.5, '#c9ccd3', 18.8, 3.25, -0.01));
     sc.add(plane(1.6, 3.5, '#c9ccd3', 18.8, 15.75, -0.01));
@@ -191,6 +227,13 @@ export class World {
     sc.add(this.marker);
   }
 
+  glowDisc(x, z, r) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(r * 2, r * 2), this.glowMat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, 0.03, z);
+    return m;
+  }
+
   // ---------- the room: owned 2×2 m tiles, floor, walls ----------
   ownsTile(i, j) { return ownsTile(this.s, i, j); }
   isFloor(x, z) { return this.ownsTile(Math.floor(x / TILE), Math.floor(z / TILE)); }
@@ -207,20 +250,24 @@ export class World {
     if (this.room) sc.remove(this.room);
     const g = (this.room = new THREE.Group());
     sc.add(g);
-    const wall = '#fff3e3', trim = '#ff8fab', walls = [];
+    const trim = '#ff8fab', walls = [], paint = this.s.paint;
+    // Lit from inside when it gets dark: floors and walls glow softly, windows brightly.
+    const lit = (color, emissive, k) => { const m = mat(color); m.emissive.set(emissive); this.lit.add(m); m.userData.glow = k; return color; };
+    const floorOf = (k) => lit(paint[k]?.floor ?? '#f1ebe2', '#ffcf8a', 0.32), wallOf = (k) => lit(paint[k]?.wall ?? '#fff3e3', '#ffcf8a', 0.22);
+    const pane = lit('#bde0fe', '#ffd27a', 1), wall0 = wallOf('');
     for (let i = TILES.i0; i < TILES.i1; i++) for (let j = TILES.j0; j < TILES.j1; j++) {
       if (!own(i, j)) continue;
-      const x0 = i * TILE, z0 = j * TILE;
-      g.add(plane(TILE, TILE, '#f1ebe2', x0 + 1, z0 + 1));
+      const x0 = i * TILE, z0 = j * TILE, wall = wallOf(tileKey(i, j));
+      g.add(plane(TILE, TILE, floorOf(tileKey(i, j)), x0 + 1, z0 + 1));
       // Back walls (north/west) are tall with windows; the front ones are low so you can see in.
       if (!own(i, j - 1)) {
         g.add(at(rbox(2.25, 2.4, 0.25, wall), x0 + 1, 1.2, z0 - 0.125), at(rbox(2.25, 0.12, 0.3, trim), x0 + 1, 2.4, z0 - 0.125));
-        if ((i + j) % 2) g.add(at(rbox(1.4, 0.9, 0.06, '#bde0fe'), x0 + 1, 1.45, z0 + 0.02));
+        if ((i + j) % 2) g.add(at(rbox(1.4, 0.9, 0.06, pane), x0 + 1, 1.45, z0 + 0.02));
         walls.push({ minX: x0 - 0.125, maxX: x0 + 2.125, minZ: z0 - 0.25, maxZ: z0 });
       }
       if (!own(i - 1, j)) {
         g.add(at(rbox(0.25, 2.4, 2.25, wall), x0 - 0.125, 1.2, z0 + 1), at(rbox(0.3, 0.12, 2.25, trim), x0 - 0.125, 2.4, z0 + 1));
-        if ((i + j) % 2) g.add(at(rbox(0.06, 0.9, 1.4, '#bde0fe'), x0 + 0.02, 1.45, z0 + 1));
+        if ((i + j) % 2) g.add(at(rbox(0.06, 0.9, 1.4, pane), x0 + 0.02, 1.45, z0 + 1));
         walls.push({ minX: x0 - 0.25, maxX: x0, minZ: z0 - 0.125, maxZ: z0 + 2.125 });
       }
       if (!own(i, j + 1)) {
@@ -233,7 +280,7 @@ export class World {
       }
     }
     // The original front towards the road, with the two doors.
-    for (const [z0, z1] of [[0, 1], [5.5, 14], [17.5, 20]]) g.add(at(rbox(0.25, 0.5, z1 - z0, wall), 18.125, 0.25, (z0 + z1) / 2));
+    for (const [z0, z1] of [[0, 1], [5.5, 14], [17.5, 20]]) g.add(at(rbox(0.25, 0.5, z1 - z0, wall0), 18.125, 0.25, (z0 + z1) / 2));
     for (const z of [1, 5.5, 14, 17.5]) g.add(at(rbox(0.32, 2.4, 0.32, trim), 18.125, 1.2, z));
     g.add(at(rbox(0.32, 0.3, 4.8, trim), 18.125, 2.35, 3.25), at(rbox(0.32, 0.3, 3.8, trim), 18.125, 2.35, 15.75));
     walls.push({ minX: 18, maxX: 18.25, minZ: 0, maxZ: 20 });
@@ -241,7 +288,7 @@ export class World {
     this.doorways = [];
     for (const [k, kind] of Object.entries(this.s.walls)) {
       if (!isInnerEdge(this.s, k)) continue;
-      const { d } = parseEdge(k), b = edgeBox(k), cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2, hor = d === 'h';
+      const { d } = parseEdge(k), b = edgeBox(k), [ti, tj] = edgeTiles(k)[1], wall = wallOf(tileKey(ti, tj)), cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2, hor = d === 'h';
       const seg = (len, h, x, z, c) => at(hor ? rbox(len, h, 0.18, c, 0.04) : rbox(0.18, h, len, c, 0.04), x, h / 2, z);
       if (kind === 'door') {
         for (const s of [-1, 1]) g.add(seg(0.22, 1.5, cx + (hor ? s * 0.95 : 0), cz + (hor ? 0 : s * 0.95), trim));
@@ -328,22 +375,23 @@ export class World {
   // ---------- furniture (rebuilt when something is placed) ----------
   makeFurniture(type, i) {
     const g = new THREE.Group();
-    if (type === 'shelf') {
-      for (const [px, pz] of [[-1.27, -0.3], [1.27, -0.3], [-1.27, 0.3], [1.27, 0.3]]) g.add(at(rbox(0.08, 1.75, 0.08, '#5c677d', 0.02), px, 0.875, pz));
+    if (FURNITURE[type].stores) {
+      const big = type === 'rack', hw = big ? 1.77 : 1.27, cols = big ? 7 : 5, deck = big ? 3.62 : 2.62, dz = big ? 0.92 : 0.72, post = big ? '#2a6f97' : '#5c677d', top = big ? 2.1 : 1.72;
+      for (const [px, pz] of [[-hw, -dz / 2 + 0.06], [hw, -dz / 2 + 0.06], [-hw, dz / 2 - 0.06], [hw, dz / 2 - 0.06]]) g.add(at(rbox(0.08, top + 0.03, 0.08, post, 0.02), px, (top + 0.03) / 2, pz));
       const items = [];
       this.itemGeo ??= new RoundedBoxGeometry(0.36, 0.3, 0.46, 2, 0.06);
-      for (const [b, y] of [0.1, 0.5, 0.9, 1.3].entries()) {
-        g.add(at(rbox(2.62, 0.06, 0.72, '#a3b1c6', 0.02), 0, y, 0));
-        for (let c = 0; c < 5; c++) {
+      for (const [b, y] of (big ? [0.1, 0.5, 0.9, 1.3, 1.7] : [0.1, 0.5, 0.9, 1.3]).entries()) {
+        g.add(at(rbox(deck, 0.06, dz, big ? '#f4a261' : '#a3b1c6', 0.02), 0, y, 0));
+        for (let c = 0; c < cols; c++) {
           const m = new THREE.Mesh(this.itemGeo, mat('#ffffff'));
           m.castShadow = true;
-          m.position.set(-1.04 + c * 0.52, y + 0.18, 0);
+          m.position.set(-hw + 0.23 + c * 0.52, y + 0.18, 0);
           m.visible = false;
           g.add(m);
-          items[b * 5 + c] = m;
+          items[b * cols + c] = m;
         }
       }
-      g.add(at(rbox(2.62, 0.06, 0.72, '#a3b1c6', 0.02), 0, 1.72, 0));
+      g.add(at(rbox(deck, 0.06, dz, big ? '#f4a261' : '#a3b1c6', 0.02), 0, top, 0));
       return { g, items };
     }
     if (type === 'table') {
@@ -353,10 +401,12 @@ export class World {
       g.add(at(rbox(0.6, 0.12, 0.45, '#d4a373', 0.02), -0.62, 0.94, -0.2));
       const box = at(rbox(0.5, 0.38, 0.5, '#d9a066', 0.05), 0, 1.07, 0.05);
       box.visible = false;
-      g.add(box);
-      return { g, box };
+      const tape = at(rbox(0.52, 0.02, 0.1, '#c08552', 0.005), 0, 1.27, 0.05);
+      tape.visible = false;
+      g.add(box, tape);
+      return { g, box, tape };
     }
-    if (FURNITURE[type].decor) return { g: this.makeDecor(type, g) };
+    if (FURNITURE[type].decor) return this.makeDecor(type, g);
     for (const [px, pz] of [[-0.72, -0.32], [0.72, -0.32], [-0.72, 0.32], [0.72, 0.32]]) g.add(at(rbox(0.07, 0.74, 0.07, '#adb5bd', 0.02), px, 0.37, pz));
     g.add(at(rbox(1.6, 0.08, 0.8, '#f4f1de', 0.03), 0, 0.76, 0));
     g.add(at(rbox(0.12, 0.25, 0.08, '#495057', 0.02), 0, 0.92, -0.25));
@@ -365,10 +415,13 @@ export class World {
     g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.4), screenMat), 0, 1.25, -0.225));
     g.add(at(rbox(0.5, 0.03, 0.16, '#dee2e6', 0.01), 0, 0.81, 0.08));
     g.add(at(rbox(0.12, 0.12, 0.12, i === 0 ? '#ff8fab' : '#90e0ef', 0.04), 0.6, 0.86, -0.15));
+    // Office chair in front of the desk
+    g.add(at(rbox(0.46, 0.08, 0.44, '#4a4e69', 0.03), 0, 0.46, 0.66), at(rbox(0.44, 0.42, 0.07, '#4a4e69', 0.03), 0, 0.72, 0.9), at(rbox(0.07, 0.4, 0.07, '#adb5bd', 0.02), 0, 0.22, 0.66));
     return { g, screenMat };
   }
 
   makeDecor(type, g) {
+    const parts = {};
     const cyl = (rt, rb, h, c) => new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 14), mat(c));
     const ball = (r, c) => new THREE.Mesh(new THREE.SphereGeometry(r, 14, 12), mat(c));
     if (type === 'plant') {
@@ -405,10 +458,68 @@ export class World {
         g.add(at(rod, x, 1.04, 0));
         for (const z of [-0.2, 0.2]) g.add(at(rbox(0.06, 0.14, 0.06, i % 2 ? '#e63946' : '#457b9d', 0.02), x, 1.0, z));
       }
-      g.add(at(ball(0.04, '#ffffff'), 0.05, 1.0, 0.05));
+      parts.ball = at(ball(0.04, '#ffffff'), 0.05, 1.0, 0.05);
+      g.add(parts.ball);
+    } else if (type === 'printer') {
+      g.add(at(rbox(0.5, 0.75, 0.5, '#adb5bd', 0.03), 0, 0.375, 0), at(rbox(0.46, 0.2, 0.42, '#f1f3f5', 0.04), 0, 0.85, 0), at(rbox(0.24, 0.015, 0.3, '#ffffff', 0.005), 0, 0.965, 0.04), at(rbox(0.08, 0.04, 0.02, '#2bb673', 0.005), 0.14, 0.86, 0.215));
+    } else if (type === 'belt') {
+      g.add(at(rbox(4, 0.05, 0.9, '#495057', 0.02), 0, 0.025, 0));
+      this.beltTex ??= (() => {
+        const c = document.createElement('canvas');
+        c.width = 64; c.height = 16;
+        const x = c.getContext('2d');
+        x.fillStyle = '#3a3f4a'; x.fillRect(0, 0, 64, 16);
+        x.fillStyle = '#ffc300'; x.beginPath(); x.moveTo(16, 2); x.lineTo(30, 8); x.lineTo(16, 14); x.fill();
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.repeat.set(5, 1);
+        return tex;
+      })();
+      const top = new THREE.Mesh(new THREE.PlaneGeometry(3.9, 0.74), new THREE.MeshStandardMaterial({ map: this.beltTex, roughness: 0.9 }));
+      top.rotation.x = -Math.PI / 2;
+      g.add(at(top, 0, 0.056, 0));
+    } else if (type === 'whiteboard') {
+      for (const x of [-0.6, 0.6]) g.add(at(rbox(0.06, 1.6, 0.06, '#adb5bd', 0.02), x, 0.8, 0), at(rbox(0.06, 0.04, 0.3, '#adb5bd', 0.01), x, 0.02, 0));
+      g.add(at(rbox(1.4, 0.9, 0.05, '#ffffff', 0.02), 0, 1.25, 0));
+      for (const [x, y, w, c] of [[-0.3, 1.45, 0.6, '#ef476f'], [0.1, 1.28, 0.9, '#4c8df6'], [-0.2, 1.1, 0.7, '#2bb673']]) g.add(at(rbox(w, 0.04, 0.01, c, 0.005), x, y, 0.03));
+    } else if (type === 'lockers') {
+      for (let k = 0; k < 4; k++) {
+        const x = -0.6 + k * 0.4;
+        g.add(at(rbox(0.38, 1.7, 0.48, k % 2 ? '#4cc9f0' : '#3a86ff', 0.02), x, 0.85, 0));
+        g.add(at(rbox(0.04, 0.12, 0.02, '#ffffff', 0.005), x + 0.12, 0.95, 0.25));
+      }
+    } else if (type === 'water') {
+      g.add(at(rbox(0.42, 0.85, 0.42, '#e9ecef', 0.04), 0, 0.425, 0), at(cyl(0.16, 0.16, 0.45, '#90e0ef'), 0, 1.08, 0), at(rbox(0.1, 0.06, 0.06, '#4c8df6', 0.01), 0, 0.7, 0.23));
+    } else if (type === 'fridge') {
+      g.add(at(rbox(0.75, 1.7, 0.66, '#dee2e6', 0.06), 0, 0.85, 0), at(rbox(0.72, 0.02, 0.02, '#adb5bd', 0.005), 0, 1.15, 0.335), at(rbox(0.04, 0.4, 0.04, '#6c757d', 0.01), 0.28, 1.4, 0.35), at(rbox(0.04, 0.4, 0.04, '#6c757d', 0.01), 0.28, 0.85, 0.35));
+    } else if (type === 'arcade') {
+      g.add(at(rbox(0.72, 1.55, 0.62, '#7b2cbf', 0.05), 0, 0.775, 0), at(rbox(0.72, 0.1, 0.34, '#3c096c', 0.03), 0, 0.92, 0.3), at(ball(0.05, '#ef476f'), -0.12, 1.0, 0.32), at(ball(0.04, '#ffd166'), 0.12, 0.99, 0.32));
+      parts.screen = new THREE.MeshStandardMaterial({ color: '#10002b', emissive: '#4cc9f0', emissiveIntensity: 0.3 });
+      g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.42), parts.screen), 0, 1.25, 0.315));
+    } else if (type === 'pingpong') {
+      for (const [px, pz] of [[-1.1, -0.55], [1.1, -0.55], [-1.1, 0.55], [1.1, 0.55]]) g.add(at(rbox(0.08, 0.74, 0.08, '#343a40', 0.02), px, 0.37, pz));
+      g.add(at(rbox(2.6, 0.06, 1.4, '#2a6f97', 0.02), 0, 0.77, 0), at(rbox(0.03, 0.14, 1.44, '#f8f9fa', 0.005), 0, 0.87, 0));
+      parts.pong = at(ball(0.045, '#ffffff'), 0, 1, 0);
+      g.add(parts.pong);
+    } else if (type === 'rug') {
+      g.add(at(rbox(2.4, 0.03, 1.6, '#cdb4db', 0.01), 0, 0.015, 0), at(rbox(2.1, 0.032, 1.3, '#ffafcc', 0.01), 0, 0.016, 0), at(rbox(1.7, 0.034, 0.9, '#bde0fe', 0.01), 0, 0.017, 0));
+    } else if (type === 'lamp') {
+      g.add(at(cyl(0.2, 0.22, 0.05, '#495057'), 0, 0.025, 0), at(cyl(0.025, 0.025, 1.5, '#495057'), 0, 0.77, 0));
+      const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.28, 0.32, 16), this.bulbMat);
+      g.add(at(shade, 0, 1.62, 0), this.glowDisc(0, 0, 2.2));
+    } else if (type === 'neon') {
+      for (const x of [-0.55, 0.55]) g.add(at(rbox(0.05, 1.2, 0.05, '#495057', 0.01), x, 0.6, 0));
+      const t = textPlane('LYKKE', 1.4, 0.45, { color: '#ff5d8f', bg: '#1b1b2f' });
+      g.add(at(t, 0, 1.35, 0.03));
+    } else if (type === 'aquarium') {
+      g.add(at(rbox(1.5, 0.6, 0.6, '#343a40', 0.03), 0, 0.3, 0));
+      const water = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.7, 0.52), new THREE.MeshStandardMaterial({ color: '#48cae4', transparent: true, opacity: 0.55, emissive: '#00b4d8', emissiveIntensity: 0.25 }));
+      g.add(at(water, 0, 0.95, 0), at(rbox(1.5, 0.06, 0.6, '#343a40', 0.02), 0, 1.33, 0), at(rbox(1.4, 0.05, 0.5, '#e9c46a', 0.01), 0, 0.63, 0));
+      parts.fish = ['#ff9f1c', '#ef476f', '#ffd166'].map((c, k) => { const f = at(ball(0.07, c), 0, 0.85 + k * 0.14, 0.02 * k); f.scale.set(1.5, 0.8, 0.6); g.add(f); return f; });
     }
-    g.traverse((m) => { m.castShadow = true; });
-    return g;
+    g.traverse((m) => { if (m.isMesh && m.material !== this.glowMat && !FURNITURE[type].walk) m.castShadow = true; });
+    return { g, ...parts };
   }
 
   rebuild() {
@@ -416,39 +527,46 @@ export class World {
     if (this.stations) this.scene.remove(this.stations);
     this.stations = new THREE.Group();
     this.scene.add(this.stations);
-    this.shelves = []; this.tables = []; this.desks = [];
+    this.shelves = []; this.tables = []; this.desks = []; this.decorParts = []; this.belts = [];
     this.obstacles = [...this.staticObstacles];
     this.zones = [{ type: 'delivery', x: DELIVERY_SPOT.x, z: DELIVERY_SPOT.z, r: 1.3 }];
-    const lists = { shelf: this.shelves, table: this.tables, desk: this.desks };
+    const lists = { shelf: this.shelves, rack: this.shelves, table: this.tables, desk: this.desks };
     for (const f of s.furniture) {
-      const list = lists[f.type], i = list?.length ?? 0;
+      const list = lists[f.type], i = list?.length ?? 0, kind = FURNITURE[f.type].stores ? 'shelf' : f.type;
       const { g, ...parts } = this.makeFurniture(f.type, i);
       g.position.set(f.x, 0, f.z);
       g.rotation.y = (f.rot * Math.PI) / 2;
       this.stations.add(g);
       const fp = footprint(f.type, f.x, f.z, f.rot);
-      if (!list) { this.obstacles.push(fp.box); continue; }
-      if (f.type === 'shelf' && f.tags?.length) g.add(this.shelfSign(f.tags));
-      list.push({ i, id: f.id, f, type: f.type, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, spots: [{ ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz }], ...parts });
+      if (!list) {
+        if (f.type === 'belt') this.belts.push(fp.box); else if (!FURNITURE[f.type].walk) this.obstacles.push(fp.box);
+        this.decorParts.push({ f, ...parts });
+        continue;
+      }
+      if (kind === 'shelf' && f.tags?.length) g.add(this.shelfSign(f.tags, f.type === 'rack' ? 2.42 : 2.02));
+      list.push({ i, id: f.id, f, g, type: kind, x: f.x, z: f.z, ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz, spots: [{ ax: fp.ax, az: fp.az, fx: fp.fx, fz: fp.fz }], ...parts });
       this.obstacles.push(fp.box);
-      this.zones.push({ type: f.type, idx: i, x: fp.ax, z: fp.az, r: FURNITURE[f.type].r });
+      this.zones.push({ type: kind, idx: i, x: fp.ax, z: fp.az, fx: fp.fx, fz: fp.fz, r: FURNITURE[f.type].r });
     }
     // Shelves and packing tables can also be used from the back when there's room to stand there.
     for (const st of [...this.shelves, ...this.tables]) {
       const bx = 2 * st.x - st.ax, bz = 2 * st.z - st.az;
       if (!this.isFloor(bx, bz) || this.obstacles.some((o) => inside(o, bx, bz, 0.3))) continue;
       st.spots.push({ ax: bx, az: bz, fx: -st.fx, fz: -st.fz });
-      this.zones.push({ type: st.type, idx: st.i, x: bx, z: bz, r: FURNITURE[st.type].r });
+      this.zones.push({ type: st.type, idx: st.i, x: bx, z: bz, fx: -st.fx, fz: -st.fz, r: FURNITURE[st.type].r });
     }
+    // A label printer speeds up the packing tables close to it.
+    const printers = s.furniture.filter((f) => f.type === 'printer');
+    for (const t of this.tables) t.fast = printers.some((p) => Math.hypot(p.x - t.x, p.z - t.z) <= 3.5) ? 0.85 : 1;
     // One count label on top of each shelf (higher when it carries a product sign).
     for (const L of this.shelfLabels || []) L.remove();
-    this.shelfLabels = this.shelves.map((sh) => this.addLabel('bubble shelfqty', '', new THREE.Vector3(sh.x, sh.f.tags?.length ? 2.95 : 2.45, sh.z)));
+    this.shelfLabels = this.shelves.map((sh) => this.addLabel('bubble shelfqty', '', new THREE.Vector3(sh.x, (sh.f.type === 'rack' ? 0.4 : 0) + (sh.f.tags?.length ? 2.95 : 2.45), sh.z)));
     this.shelfSig = '';
     this.buildGrid();
   }
 
   // A sign on top of a shelf tagged for some products, readable from both sides.
-  shelfSign(tags) {
+  shelfSign(tags, y = 2.02) {
     const ps = tags.map((id) => productById[id]).filter(Boolean), g = new THREE.Group();
     const text = ps.length === 1 ? `${ps[0].icon} ${ps[0].name}` : ps.map((p) => p.icon).join(' ');
     for (const r of [0, Math.PI]) {
@@ -457,7 +575,7 @@ export class World {
       t.position.z = r ? -0.02 : 0.02;
       g.add(t);
     }
-    g.position.y = 2.02;
+    g.position.y = y;
     return g;
   }
 
@@ -465,8 +583,10 @@ export class World {
   canPlace(type, x, z, rot, ignoreId) {
     const fp = footprint(type, x, z, rot), b = fp.box, decor = FURNITURE[type].decor;
     if (!this.boxOnFloor(b)) return { ok: false, why: 'Uden for rummet' };
+    // Rugs and belts lie flat: people walk on them and furniture may stand on them.
+    if (FURNITURE[type].walk) return [...this.fixedObstacles, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05)) ? { ok: false, why: 'Her skal der være fri adgang' } : { ok: true, fp };
     if (!decor && !this.boxOnFloor(this.aabb(fp.ax, fp.az, 0, 0), 0.35)) return { ok: false, why: 'Der skal være plads foran' };
-    const others = this.s.furniture.filter((f) => f.id !== ignoreId).map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
+    const others = this.s.furniture.filter((f) => f.id !== ignoreId && !FURNITURE[f.type].walk).map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
     const solid = [...this.staticObstacles, ...others.map((o) => o.fp.box)];
     if ([...solid, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05))) return { ok: false, why: 'Der står noget i vejen' };
     if (this.doorways.some((o) => overlaps(b, o))) return { ok: false, why: 'Den står i en døråbning' };
@@ -496,7 +616,7 @@ export class World {
   canWall(k, kind) {
     const s = this.s;
     if (!isInnerEdge(s, k)) return { ok: false, why: 'Vægge bygges inde i lageret' };
-    const b = edgeBox(k), fps = s.furniture.map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
+    const b = edgeBox(k), fps = s.furniture.filter((f) => !FURNITURE[f.type].walk).map((f) => ({ f, fp: footprint(f.type, f.x, f.z, f.rot) }));
     if ([...this.fixedObstacles, ...KEEP_CLEAR].some((o) => overlaps(b, o, 0.05))) return { ok: false, why: 'Her skal der være fri adgang' };
     if (kind === 'door') return { ok: true };
     if (fps.some((o) => overlaps(b, o.fp.box, 0.02))) return { ok: false, why: 'Der står et møbel i vejen' };
@@ -512,6 +632,7 @@ export class World {
     for (const h of [1.6, 1.2, 0.8, 0.4, 0]) {
       const g = this.screenToGround(cx, cy, h);
       const f = g && this.s.furniture.find((o) => {
+        if (FURNITURE[o.type].walk) return false;
         const b = footprint(o.type, o.x, o.z, o.rot).box;
         return g.x > b.minX - 0.15 && g.x < b.maxX + 0.15 && g.z > b.minZ - 0.15 && g.z < b.maxZ + 0.15;
       });
@@ -528,6 +649,8 @@ export class World {
     this.lblTickets = this.addLabel('bubble', '', above(() => this.desks, 2.2, new THREE.Vector3(4.6, 2.2, 3.4)));
     this.lblQuest = this.addLabel('qarrow', '⬇', new THREE.Vector3(), { clamp: true });
     this.lblQuest.hidden = true;
+    this.lblBroken = this.addLabel('bubble hot', '🔧 Ude af drift', new THREE.Vector3());
+    this.lblBroken.hidden = true;
   }
 
   // ---------- labels ----------
@@ -564,7 +687,7 @@ export class World {
       L.el.style.display = '';
       const p = this.project(typeof L.pos === 'function' ? L.pos() : L.pos);
       if (L.clamp) {
-        const m = 40, top = 190, bottom = 150;
+        const m = 40, top = 96, bottom = 130;
         const off = p.x < m || p.x > this.cw - m || p.y < top || p.y > this.ch - bottom;
         L.el.classList.toggle('edge', off);
         if (off) {
@@ -691,6 +814,31 @@ export class World {
     return best;
   }
 
+  // Walking is faster on a belt.
+  speedAt(x, z) { return this.belts.some((b) => inside(b, x, z, 0)) ? 1.8 : 1; }
+
+  // The spots on a piece of furniture where someone can spend a break, in world coordinates.
+  seats(f) {
+    const a = (f.rot * Math.PI) / 2, cos = Math.round(Math.cos(a)), sin = Math.round(Math.sin(a));
+    const rx = (x, z) => x * cos + z * sin, rz = (x, z) => z * cos - x * sin;
+    return (FURNITURE[f.type].use || []).map((u, n) => ({
+      key: `${f.id}:${n}`, f, pose: u.pose, h: u.h ?? 0.5, sit: u.ax != null,
+      x: f.x + rx(u.x, u.z), z: f.z + rz(u.x, u.z),
+      ax: f.x + rx(u.ax ?? u.x, u.az ?? u.z), az: f.z + rz(u.ax ?? u.x, u.az ?? u.z),
+      fx: rx(u.f[0], u.f[1]), fz: rz(u.f[0], u.f[1]),
+    })).filter((q) => this.isFloor(q.ax, q.az) && !this.inObstacle(q.ax, q.az));
+  }
+
+  // Take a free seat on one of these pieces (spread out by who is asking); null when they're all taken.
+  claimSeat(list, who) {
+    for (let k = 0; k < list.length; k++) {
+      const q = this.seats(list[(who + k) % list.length]).find((o) => !this.seatBy.has(o.key));
+      if (q) { this.seatBy.set(q.key, who); return q; }
+    }
+    return null;
+  }
+  releaseSeat(who) { for (const [k, v] of this.seatBy) if (v === who) this.seatBy.delete(k); }
+
   // Where to put a product: the nearest shelf tagged for it with room, otherwise the nearest open (untagged) shelf.
   shelfFor(x, z, pid) {
     const s = this.s;
@@ -717,7 +865,31 @@ export class World {
   }
 
   // ---------- per-frame ----------
-  update(dt, focus, questTarget) {
+  // Light follows the clock: warm morning, clear day, golden afternoon and a dark evening with the lights on.
+  // A new day's morning fades in over a second or two, while the day card is showing.
+  daylight(dt) {
+    const s = this.s, f = THREE.MathUtils.clamp(s.dayTime / DAY_LENGTH, 0, 1);
+    let i = 0;
+    while (i < SKY.length - 2 && f > SKY[i + 1].f) i++;
+    const A = SKY[i], B = SKY[i + 1], k = (f - A.f) / (B.f - A.f), e = 1 - Math.exp(-dt * 2.5), c = (this._c ??= new THREE.Color());
+    const mix = (cur, a, b) => cur.lerp(c.copy(a).lerp(b, k), e), num = (a, b) => a + (b - a) * k;
+    mix(this.scene.background, A.bg, B.bg);
+    mix(this.sun.color, A.sun, B.sun);
+    mix(this.hemi.color, A.sky, B.sky);
+    this.sun.intensity += (num(A.sunI, B.sunI) - this.sun.intensity) * e;
+    this.hemi.intensity += (num(A.skyI, B.skyI) - this.hemi.intensity) * e;
+    this.glow += (num(A.glow, B.glow) - this.glow) * e;
+    this.sunF += (f - this.sunF) * e;
+    const a = Math.PI * (0.12 + 0.76 * this.sunF);
+    this.sun.position.copy(this.camTarget).add(this._v.set(Math.cos(a) * 15, 6 + Math.sin(a) * 12, 6));
+    this.grassMat.color.copy(GRASS).lerp(GRASS_NIGHT, this.glow);
+    this.roadMat.color.copy(ROAD).lerp(ROAD_NIGHT, this.glow);
+    this.glowMat.opacity = this.glow * 0.8;
+    this.bulbMat.emissiveIntensity = this.glow * 1.6;
+    for (const m of this.lit) m.emissiveIntensity = this.glow * m.userData.glow;
+  }
+
+  update(dt, gdt, focus, questTarget) {
     const s = this.s, now = s.time;
     // Mobile browsers change the viewport (toolbars) without reliable resize events.
     if (this.canvas.clientWidth !== this.cw || this.canvas.clientHeight !== this.ch) this.resize();
@@ -725,27 +897,37 @@ export class World {
     this.camTarget.lerp(new THREE.Vector3(focus.x, 0, focus.z), 1 - Math.exp(-dt * 5));
     this.camera.position.copy(this.camTarget).add(this.camOffset);
     this.camera.lookAt(this.camTarget);
-    this.sun.position.copy(this.camTarget).add(new THREE.Vector3(7, 16, 5));
+    this.daylight(dt);
     this.sun.target.position.copy(this.camTarget);
+    if (this.beltTex) this.beltTex.offset.x -= gdt * 0.9;
+    for (const d of this.decorParts) {
+      const on = (this.useActive[d.f.id] || 0) > now;
+      if (d.ball && on) { d.ball.position.x = Math.sin(now * 3.1) * 0.55; d.ball.position.z = Math.cos(now * 2.3) * 0.28; }
+      if (d.pong && on) { const q = Math.sin(now * 2.8); d.pong.position.set(q * 1.15, 0.86 + Math.abs(Math.cos(now * 2.8)) * 0.35, Math.sin(now * 1.3) * 0.3); }
+      if (d.screen) { d.screen.emissive.setHSL(on ? (now * 0.3) % 1 : 0.55, 0.8, 0.55); d.screen.emissiveIntensity = on ? 0.9 : 0.25; }
+      if (d.fish) d.fish.forEach((m, k) => { const w = now * (0.5 + k * 0.17) + k * 2; m.position.x = Math.sin(w) * 0.55; m.rotation.y = Math.cos(w) > 0 ? 0 : Math.PI; });
+    }
 
     // Shelf contents
-    const per = shelfCap(s);
-    const sig = JSON.stringify(this.shelves.map((sh) => sh.f.stock)) + per;
+    const sig = JSON.stringify(this.shelves.map((sh) => sh.f.stock)) + capOf(s, { type: 'shelf' });
     if (sig !== this.shelfSig) {
       this.shelfSig = sig;
       // Each shelf shows its own items, grouped by product.
       for (const sh of this.shelves) {
+        const per = capOf(s, sh.f), count = sh.items.length;
         const seq = PRODUCTS.map((p) => [p.color, sh.f.stock?.[p.id] || 0]);
         const colorAt = (u) => { for (const [c, n] of seq) { if (u < n) return c; u -= n; } return '#ffffff'; };
-        const n = shelfCount(sh.f), shown = Math.ceil((Math.min(per, n) / per) * 20);
-        const what = PRODUCTS.filter((p) => sh.f.stock?.[p.id]).map((p) => `${p.icon}${sh.f.stock[p.id]}`).join(' ');
+        const n = shelfCount(sh.f), shown = Math.ceil((Math.min(per, n) / per) * count);
+        // The two biggest products; the rest is one tap away in the shelf's menu.
+        const held = PRODUCTS.filter((p) => sh.f.stock?.[p.id]).sort((a, b) => sh.f.stock[b.id] - sh.f.stock[a.id]);
+        const what = held.slice(0, 2).map((p) => `${p.icon}${sh.f.stock[p.id]}`).join(' ') + (held.length > 2 ? ` +${held.length - 2}` : '');
         const L = this.shelfLabels[sh.i];
         L.set(`${what || 'Tom'} <b>${n}/${per}</b>`);
         L.el.classList.toggle('full', n >= per);
         L.el.classList.toggle('empty', !n);
         sh.items.forEach((m, k) => {
           m.visible = k < shown;
-          if (m.visible) m.material = mat(colorAt(Math.floor((k * per) / 20)));
+          if (m.visible) m.material = mat(colorAt(Math.floor((k * per) / count)));
         });
       }
     }
@@ -788,8 +970,18 @@ export class World {
     this.tables.forEach((t, i) => {
       const active = (this.tablePacking[i] || -9) > now - 0.15;
       t.box.visible = active;
-      if (active) { t.box.rotation.y = Math.sin(now * 9) * 0.25; t.box.scale.y = 0.85 + Math.abs(Math.sin(now * 12)) * 0.2; }
+      // The box is folded up, then taped shut.
+      const p = this.tableProg[i] || 0, h = Math.max(0.12, Math.min(1, p * 2.4));
+      t.tape.visible = active && p > 0.55;
+      if (active) { t.box.scale.y = h; t.box.position.y = 0.88 + 0.19 * h; t.tape.scale.x = Math.max(0.05, (p - 0.55) / 0.45); }
+      const broken = s.broken?.fid === t.id && s.broken.until > now;
+      if (broken && this.tableRes[i] == null) this.tableRes[i] = 'broken';
+      else if (!broken && this.tableRes[i] === 'broken') this.tableRes[i] = null;
+      t.g.rotation.z = broken ? 0.07 : 0;
     });
+    const out = this.tables.find((t) => s.broken?.fid === t.id && s.broken.until > now);
+    this.lblBroken.hidden = !out;
+    if (out) this.lblBroken.pos = new THREE.Vector3(out.x, 1.7, out.z);
     this.desks.forEach((d, i) => {
       const on = (this.deskActive[i] || -9) > now - 0.15;
       d.screenMat.emissive.setHSL(on ? (now * 0.15 + i * 0.3) % 1 : 0.55, 0.7, 0.55);
@@ -797,7 +989,7 @@ export class World {
     });
 
     for (const t of this.trucks) {
-      const z = t.g.position.z;
+      const z = t.g.position.z, dt = gdt;
       if (t.state === 'in') {
         t.g.position.z = z + Math.max(1.2, (t.stop - z) * 3) * dt;
         if (t.g.position.z >= t.stop) { t.g.position.z = t.stop; t.state = 'wait'; t.t = 1.4; }
@@ -815,7 +1007,8 @@ export class World {
     // What's waiting to be packed, per product: grey = still on the shelf, green ✓ = already fetched.
     const q = queuedCount(s), open = {};
     for (const o of s.orders) (open[o.productId] ??= { q: 0, p: 0 })[o.status === 'picked' ? 'p' : 'q']++;
-    const chips = Object.entries(open).map(([id, n]) => (n.q ? `<i>${productById[id].icon}${n.q}</i>` : '') + (n.p ? `<i class="got">${productById[id].icon}${n.p}✓</i>` : '')).join('');
+    const kinds = Object.entries(open);
+    const chips = kinds.slice(0, 4).map(([id, n]) => (n.q ? `<i>${productById[id].icon}${n.q}</i>` : '') + (n.p ? `<i class="got">${productById[id].icon}${n.p}✓</i>` : '')).join('') + (kinds.length > 4 ? `<i>+${kinds.length - 4}</i>` : '');
     this.lblOrders.set(s.orders.length ? `🧾 ${s.orders.length} at pakke<span class="olist">${chips}</span>` : '');
     this.lblOrders.el.classList.toggle('hot', q >= 6);
     this.lblTickets.set(s.tickets ? `🎧 ${s.tickets} ${s.tickets === 1 ? 'henvendelse' : 'henvendelser'}` : '');

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { FURNITURE, TILE_COST, TILE_RENT, WALL_COST, DOOR_COST } from './data.js';
+import { FURNITURE, TILE_COST, TILE_RENT, WALL_COST, DOOR_COST, PAINT_COST, FLOOR_COLORS, WALL_COLORS } from './data.js';
 import { bus, syncFurniture, assignDesks, spend, kr } from './state.js';
 import { footprint, LOT, TILE, TILES, tileKey } from './world.js';
-import { edgeAt, edgeBox, isInnerEdge, TILE as T } from './rooms.js';
+import { edgeAt, edgeBox, isInnerEdge, roomMap, roomAt, TILE as T } from './rooms.js';
 
 const SNAP = 0.25;
 const snap = (v) => Math.round(v / SNAP) * SNAP;
@@ -10,7 +10,7 @@ const $ = (sel) => document.querySelector(sel);
 
 // Placing and moving furniture, and buying floor space.
 // Modes: null (playing), 'edit' (pick something to move), 'place' (ghost follows the finger), 'expand' (drag over tiles to buy),
-// 'walls' (tap or drag along the tile edges to build walls and doors, or tear them down).
+// 'walls' (tap or drag along the tile edges to build walls and doors, or tear them down), 'paint' (tap a room to colour it).
 export class Builder {
   constructor(world, s, player) {
     this.w = world; this.s = s; this.player = player;
@@ -21,16 +21,13 @@ export class Builder {
         <div class="bmsg"></div>
         <div class="bbtns"></div>
       </div>`);
-    document.getElementById('hud').insertAdjacentHTML('beforeend', `
-      <div id="buildfab">
-        <button class="fab kit" data-b="kit">📦 Placér <b></b></button>
-        <button class="fab" data-b="edit">🛠️ Indret</button>
-      </div>`);
+    document.getElementById('app').insertAdjacentHTML('beforeend', `
+      <div id="buildfab"><button class="fab kit" data-b="kit">📦 Placér <b></b></button></div>`);
     document.addEventListener('click', (e) => {
       const b = e.target.closest('[data-b]');
       if (!b || b.disabled) return;
       bus.emit('sfx', 'click');
-      this[b.dataset.b]();
+      this[b.dataset.b](b.dataset.v);
     });
     bus.on('placeStart', (type) => this.start(type));
     bus.on('expandStart', () => this.expand());
@@ -50,7 +47,7 @@ export class Builder {
 
   // ---------- buttons ----------
   kit() { const type = Object.keys(this.s.kit).find((k) => this.s.kit[k] > 0); if (type) this.start(type); }
-  edit() { this.clearTiles(); this.mode = 'edit'; this.setZoom(true); this.render(); }
+  edit() { bus.emit('closeSheet'); this.clearTiles(); this.mode = 'edit'; this.setZoom(true); this.render(); }
   done() { this.clearTiles(); this.mode = null; this.setZoom(false); this.render(); }
   rotate() { this.p.rot = (this.p.rot + 1) % 4; this.validate(); }
   cancel() { this.clearGhost(); this.p = null; this.mode = this.wasEditing ? 'edit' : null; if (!this.mode) this.setZoom(false); this.render(); }
@@ -59,7 +56,7 @@ export class Builder {
     const s = this.s, p = this.p;
     if (!this.validate()) return;
     if (p.id == null) {
-      s.furniture.push({ id: s.nextId++, type: p.type, x: p.x, z: p.z, rot: p.rot, ...(p.type === 'shelf' && { tags: [] }) });
+      s.furniture.push({ id: s.nextId++, type: p.type, x: p.x, z: p.z, rot: p.rot, ...(FURNITURE[p.type].stores && { tags: [] }) });
       s.kit[p.type]--;
     } else Object.assign(s.furniture.find((f) => f.id === p.id), { x: p.x, z: p.z, rot: p.rot });
     syncFurniture(s);
@@ -77,6 +74,7 @@ export class Builder {
 
   // ---------- buying floor space ----------
   expand() {
+    bus.emit('closeSheet');
     this.clearGhost();
     this.p = null;
     this.mode = 'expand';
@@ -137,19 +135,23 @@ export class Builder {
 
   // ---------- inner walls and doors ----------
   walls() {
+    bus.emit('closeSheet');
     this.clearGhost();
     this.p = null;
     this.mode = 'walls';
     this.tool ??= 'wall';
+    this.overview();
+    this.drawEdges();
+    this.render();
+  }
+  // Show the whole building: dragging draws, so there's no panning in these modes.
+  overview() {
     this.player.stopPath();
-    // Show the whole building: drag paints walls, so there's no panning here.
     const ts = [[0, 0], [8, 9], ...this.s.tiles.map((k) => k.split(',').map(Number))];
     const xs = ts.map(([i]) => i * TILE), zs = ts.map(([, j]) => j * TILE);
     this.focus.set((Math.min(...xs) + Math.max(...xs) + TILE) / 2, 0, (Math.min(...zs) + Math.max(...zs) + TILE) / 2);
     this.w.zoom = Math.max(0.45, Math.min(0.7, 13 / Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs))));
     this.w.resize();
-    this.drawEdges();
-    this.render();
   }
   toolWall() { this.tool = 'wall'; this.render(); }
   toolDoor() { this.tool = 'door'; this.render(); }
@@ -194,6 +196,38 @@ export class Builder {
     this.drawEdges();
     this.render();
   }
+
+  // ---------- colours ----------
+  paintRooms() {
+    bus.emit('closeSheet');
+    this.clearTiles();
+    this.clearGhost();
+    this.p = null;
+    this.mode = 'paint';
+    this.paintKind ??= 'floor';
+    this.overview();
+    this.render();
+  }
+  kindFloor() { this.paintKind = 'floor'; this.color = null; this.render(); }
+  kindWall() { this.paintKind = 'wall'; this.color = null; this.render(); }
+  pickColor(c) { this.color = c; this.render(); }
+
+  // Colour the room under this point.
+  paintRoom(g) {
+    const s = this.s;
+    if (!this.color) { bus.emit('toast', '🎨 Vælg en farve først', 'warn'); return; }
+    const room = roomAt(s, g.x, g.z);
+    if (room == null) return;
+    const tiles = [...roomMap(s)].filter(([, r]) => r === room).map(([k]) => k), kind = this.paintKind;
+    if (tiles.every((k) => s.paint[k]?.[kind] === this.color)) return;
+    if (!spend(s, tiles.length * PAINT_COST, 'invest')) { this.warn('Ikke nok penge 💸'); return; }
+    for (const k of tiles) s.paint[k] = { ...s.paint[k], [kind]: this.color };
+    bus.emit('sfx', 'pop');
+    this.w.buildRoom();
+    this.w.rebuild();
+    this.render();
+  }
+
   warn(why) { if (this.warned !== why) { this.warned = why; bus.emit('toast', `🧱 ${why}`, 'bad'); } }
   onDragEnd() { this.stroke = null; this.warned = null; }
 
@@ -280,6 +314,7 @@ export class Builder {
     if (this.mode === 'place') { this.moveTo(g.x, g.z); return; }
     if (this.mode === 'expand') { this.select(g, g); return; }
     if (this.mode === 'walls') { this.paint(g); this.onDragEnd(); return; }
+    if (this.mode === 'paint') { this.paintRoom(g); return; }
     // Edit mode: pick up the piece under the finger.
     let best = null, bd = Infinity;
     for (const f of this.s.furniture) {
@@ -307,7 +342,7 @@ export class Builder {
 
   update(playerPos) {
     if (this.mode === 'place') this.focus.set(this.p.rx, 0, this.p.rz);
-    else if (this.mode !== 'edit' && this.mode !== 'expand' && this.mode !== 'walls') this.focus.copy(playerPos);
+    else if (!['edit', 'expand', 'walls', 'paint'].includes(this.mode)) this.focus.copy(playerPos);
     const n = this.kitCount();
     if (n !== this.shownKit) { this.shownKit = n; this.render(); }
   }
@@ -318,13 +353,20 @@ export class Builder {
     const kit = $('#buildfab .kit');
     kit.hidden = !this.kitCount();
     kit.querySelector('b').textContent = this.kitCount();
-    $('#buildfab').hidden = this.active;
+    $('#buildfab').hidden = this.active || !this.kitCount();
     $('#buildbar').hidden = !this.active;
     if (!this.active) return;
     if (this.mode === 'walls') {
       const tool = (id, label) => `<button class="btn ${this.tool === id ? 'ok' : 'ghost'}" data-b="${id === 'wall' ? 'toolWall' : id === 'door' ? 'toolDoor' : 'toolErase'}">${label}</button>`;
       $('#buildbar .bmsg').innerHTML = `<b>🧱 Vægge & døre</b> · Tryk eller træk langs de lilla streger · Væg ${kr(WALL_COST)} · Dør ${kr(DOOR_COST)} pr. ${T} m · Rive ned er gratis`;
       $('#buildbar .bbtns').innerHTML = `${tool('wall', '🧱 Væg')}${tool('door', '🚪 Dør')}${tool('erase', '🔨 Riv ned')}<button class="btn ok" data-b="edit">Færdig</button>`;
+      return;
+    }
+    if (this.mode === 'paint') {
+      const kind = this.paintKind, cols = kind === 'floor' ? FLOOR_COLORS : WALL_COLORS;
+      $('#buildbar .bmsg').innerHTML = `<b>🎨 Farver</b> · Vælg en farve og tryk på et rum · ${kr(PAINT_COST)} pr. felt
+        <div class="swatches">${cols.map((c) => `<button class="sw ${this.color === c ? 'on' : ''}" style="background:${c}" data-b="pickColor" data-v="${c}"></button>`).join('')}</div>`;
+      $('#buildbar .bbtns').innerHTML = `<button class="btn ${kind === 'floor' ? 'ok' : 'ghost'}" data-b="kindFloor">Gulv</button><button class="btn ${kind === 'wall' ? 'ok' : 'ghost'}" data-b="kindWall">Vægge</button><button class="btn ok" data-b="edit">Færdig</button>`;
       return;
     }
     if (this.mode === 'expand') {
@@ -337,13 +379,13 @@ export class Builder {
     } else if (placing) {
       const F = FURNITURE[this.p.type];
       $('#buildbar .bmsg').innerHTML = this.ok
-        ? `<b>${F.icon} ${F.name}</b> · Træk for at flytte · ${F.decor ? `😊 +${F.joy} glæde for ansatte tæt på` : '🟢 = hvor man står'}`
+        ? `<b>${F.icon} ${F.name}</b> · Træk for at flytte · ${F.decor ? (F.desc || `😊 +${F.joy} glæde`) : '🟢 = hvor man står'}`
         : `<b>${F.icon} ${F.name}</b> · <span class="bad">${this.why}</span>`;
       $('#buildbar .bbtns').innerHTML = `<button class="btn ghost" data-b="cancel">✕</button><button class="btn ghost" data-b="rotate">↻ Drej</button>
         <button class="btn ok" data-b="confirm" ${this.ok ? '' : 'disabled'}>✓ Placér</button>`;
     } else {
       $('#buildbar .bmsg').innerHTML = '<b>🛠️ Indret</b> · Tryk på et møbel for at flytte eller dreje det';
-      $('#buildbar .bbtns').innerHTML = `${this.kitCount() ? '<button class="btn ghost" data-b="kit">📦 Placér nyt</button>' : ''}<button class="btn ghost" data-b="walls">🧱 Vægge</button><button class="btn ghost" data-b="expand">📐 Udvid</button><button class="btn ok" data-b="done">Færdig</button>`;
+      $('#buildbar .bbtns').innerHTML = `${this.kitCount() ? '<button class="btn ghost" data-b="kit">📦 Placér nyt</button>' : ''}<button class="btn ghost" data-b="walls">🧱 Vægge</button><button class="btn ghost" data-b="paintRooms">🎨 Farver</button><button class="btn ghost" data-b="expand">📐 Udvid</button><button class="btn ok" data-b="done">Færdig</button>`;
     }
   }
 }

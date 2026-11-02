@@ -14,9 +14,9 @@ export class Autopilot {
     this.t = 0; this.target = null; this.task = null; this.free = false;
     this.cam = new THREE.Vector3();
     document.getElementById('lbtns').insertAdjacentHTML('afterbegin', `
-      <button id="followbtn" class="fab" hidden>📍 Følg chefen</button>
-      <div id="autobtn" class="fab on"><button data-act="autoSet"></button><button class="gear" data-act="autoSet" title="Prioriteter">⚙️</button></div>`);
-    this.btn = document.querySelector('#autobtn button');
+      <button id="followbtn" class="fab" hidden>📍 Chef</button>
+      <button id="autobtn" class="fab on" data-act="autoSet" title="Chefens prioriteter"></button>`);
+    this.btn = document.querySelector('#autobtn');
     this.followBtn = document.getElementById('followbtn');
     this.followBtn.addEventListener('click', () => { this.free = false; });
   }

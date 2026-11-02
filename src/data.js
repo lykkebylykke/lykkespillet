@@ -1,18 +1,30 @@
 // All tunable game data lives here.
 
-export const DAY_LENGTH = 120; // seconds per in-game day
+export const DAY_LENGTH = 120; // game seconds per in-game day
+// How fast the game runs: game seconds per real second. Normal makes a day last 3 real minutes.
+export const SPEEDS = {
+  slow: { icon: '🐢', name: '½×', scale: 1 / 3, next: 'normal' },
+  normal: { icon: '▶️', name: '1×', scale: 2 / 3, next: 'fast' },
+  fast: { icon: '⏩', name: '2×', scale: 4 / 3, next: 'slow' },
+};
+// Game seconds as time on the shop's clock (the working day is 11½ hours).
+export const gameTime = (sec) => {
+  const m = (sec / DAY_LENGTH) * 690;
+  if (m < 55) return `${Math.max(5, Math.round(m / 5) * 5)} min`;
+  return `${String(Math.round(m / 30) / 2).replace('.', ',')} t`;
+};
 
 // ---------- running costs ----------
 export const PACKAGING = 4; // kr per parcel
 export const FREIGHT = 15; // kr per parcel
 // Daily rent grows with the space you build.
-export const rentOf = (s) => 100 + 40 * (s.shelves - 1) + 80 * (s.tables - 1) + 50 * (s.desks - 1) + TILE_RENT * s.tiles.length;
+export const rentOf = (s) => 100 + 40 * (s.shelves - 1) + 80 * (s.tables - 1) + 50 * (s.desks - 1) + 90 * (s.racks || 0) + TILE_RENT * s.tiles.length;
 // Extra floor space, bought per 2×2 m tile.
 export const TILE_COST = 300;
 export const TILE_RENT = 6;
 export const EXPENSES = {
   goods: '📦 Varekøb', staff: '👥 Løn', rent: '🏠 Husleje', packaging: '🎁 Emballage', freight: '🚚 Fragt',
-  hiring: '🤝 Rekruttering & oplæring', invest: '🏗️ Byggeri & upgrades', marketing: '📣 Annoncer & boosts', interest: '🏦 Renter', returns: '↩️ Returneringer',
+  hiring: '🤝 Rekruttering & oplæring', invest: '🏗️ Byggeri & upgrades', marketing: '📣 Annoncer & boosts', interest: '🏦 Renter', returns: '↩️ Returneringer', events: '🎲 Hændelser', tax: '🧾 Moms',
 };
 // Bank loans: paid back in equal daily installments (principal + interest) when each day ends.
 export const LOANS = [
@@ -126,18 +138,34 @@ export const DESK_SLOTS = [{ x: 1.8, z: 2 }, { x: 4.6, z: 2 }, { x: 7.4, z: 2 },
 export const DESK_COST = [0, 1000, 2000, 3500, 6000, 9000];
 export const DESK_LVL = [1, 3, 3, 5, 7, 9];
 // Furniture the player places freely. half/acc are for rotation 0 (access side faces +z).
+// stores: holds goods like a shelf (capMult × the shelf size). decor: no work spot. walk: flat, you walk on it.
+// joy: happiness for up to joyMax pieces. Pieces near where people work count in the same room within ~7 m;
+// pause and anywhere pieces count wherever they stand, because staff walk there.
+// use: spots in the piece's own coordinates, for staff on a break (x/z: where they end up; ax/az: where they walk to
+// first when they sit on it; f: which way they look; h: seat height).
+const seat = (x, z, pose, f, extra) => ({ x, z, pose, f, ...extra });
 export const FURNITURE = {
-  shelf: { name: 'Lagerreol', icon: '🧱', key: 'shelves', cost: SHELF_COST, lvl: SHELF_LVL, slots: SHELF_SLOTS, hx: 1.35, hz: 0.4, acc: 0.85, r: 0.85 },
-  table: { name: 'Pakkebord', icon: '📦', key: 'tables', cost: TABLE_COST, lvl: TABLE_LVL, slots: TABLE_SLOTS, hx: 1.05, hz: 0.55, acc: 0.95, r: 0.85 },
-  desk: { name: 'Skrivebord', icon: '🖥️', key: 'desks', cost: DESK_COST, lvl: DESK_LVL, slots: DESK_SLOTS, hx: 0.85, hz: 0.45, acc: 0.9, r: 0.8 },
-  // Decor has no work spot; it makes employees happier (joy points), and happy people work faster.
-  // Plants and music work near where people work (same room, within ~7 m); break furniture (pause) works
-  // wherever it stands, because staff walk there on their breaks.
-  plant: { name: 'Plante', icon: '🪴', decor: true, joy: 4, cost: [250, 250, 350, 350, 500, 500], lvl: [1, 1, 2, 2, 3, 3], hx: 0.3, hz: 0.3, acc: 0 },
-  coffee: { name: 'Kaffebar', icon: '☕', decor: true, joy: 8, pause: true, cost: [1200], lvl: [2], hx: 0.6, hz: 0.35, acc: 0 },
-  sofa: { name: 'Sofa', icon: '🛋️', decor: true, joy: 6, pause: true, cost: [1500, 2500], lvl: [3, 6], hx: 1.0, hz: 0.45, acc: 0 },
-  speaker: { name: 'Højttaler', icon: '🎵', decor: true, joy: 7, cost: [800], lvl: [4], hx: 0.3, hz: 0.3, acc: 0 },
-  foosball: { name: 'Bordfodbold', icon: '⚽', decor: true, joy: 8, pause: true, cost: [3500], lvl: [5], hx: 0.75, hz: 0.45, acc: 0 },
+  shelf: { name: 'Lagerreol', icon: '🧱', cat: 'work', key: 'shelves', stores: true, cost: SHELF_COST, lvl: SHELF_LVL, slots: SHELF_SLOTS, hx: 1.35, hz: 0.4, acc: 0.85, r: 0.85 },
+  rack: { name: 'Stor pallereol', icon: '🏗️', cat: 'work', key: 'racks', stores: true, capMult: 2, desc: 'Rummer dobbelt så meget som en lagerreol', cost: [4000], lvl: [7], hx: 1.85, hz: 0.5, acc: 0.95, r: 0.9 },
+  table: { name: 'Pakkebord', icon: '📦', cat: 'work', key: 'tables', cost: TABLE_COST, lvl: TABLE_LVL, slots: TABLE_SLOTS, hx: 1.05, hz: 0.55, acc: 0.95, r: 0.85 },
+  desk: { name: 'Skrivebord', icon: '🖥️', cat: 'work', key: 'desks', cost: DESK_COST, lvl: DESK_LVL, slots: DESK_SLOTS, hx: 0.85, hz: 0.45, acc: 0.9, r: 0.8 },
+  printer: { name: 'Labelprinter', icon: '🖨️', cat: 'work', decor: true, desc: 'Pakkeborde inden for 3,5 m pakker 15 % hurtigere', cost: [900], lvl: [3], hx: 0.3, hz: 0.3, acc: 0 },
+  belt: { name: 'Rullebånd', icon: '➡️', cat: 'work', decor: true, walk: true, desc: 'Alle går næsten dobbelt så hurtigt på båndet', cost: [1500], lvl: [5], hx: 2, hz: 0.45, acc: 0 },
+  whiteboard: { name: 'Whiteboard', icon: '📋', cat: 'work', decor: true, joy: 3, joyMax: 1, label: '📋 Whiteboard', desc: 'Kontorfolk arbejder 10 % bedre (ét er nok)', cost: [1200], lvl: [4], hx: 0.7, hz: 0.12, acc: 0 },
+  lockers: { name: 'Garderobeskabe', icon: '🚪', cat: 'pause', decor: true, anywhere: true, joy: 4, joyMax: 1, label: '🧥 Garderobe', cost: [900], lvl: [3], hx: 0.8, hz: 0.25, acc: 0, use: [seat(0, 0.7, 'reach', [0, -1])] },
+  coffee: { name: 'Kaffebar', icon: '☕', cat: 'pause', decor: true, joy: 8, joyMax: 1, pause: true, label: '☕ Kaffe', tip: '☕ Savner en kop kaffe i pauserne – køb en kaffebar', cost: [1200], lvl: [2], hx: 0.6, hz: 0.35, acc: 0, use: [seat(-0.25, 0.8, 'cup', [0, -1]), seat(0.3, 0.8, 'cup', [0, -1])] },
+  water: { name: 'Vandautomat', icon: '🚰', cat: 'pause', decor: true, joy: 3, joyMax: 1, pause: true, label: '🚰 Vand', cost: [400], lvl: [1], hx: 0.25, hz: 0.25, acc: 0, use: [seat(0, 0.65, 'cup', [0, -1])] },
+  fridge: { name: 'Køleskab', icon: '🧊', cat: 'pause', decor: true, joy: 4, joyMax: 1, pause: true, label: '🧊 Køleskab', cost: [700], lvl: [2], hx: 0.4, hz: 0.35, acc: 0, use: [seat(0, 0.8, 'cup', [0, -1])] },
+  sofa: { name: 'Sofa', icon: '🛋️', cat: 'pause', decor: true, joy: 6, joyMax: 2, pause: true, label: '🛋️ Pausested', tip: '🛋️ Savner et sted at holde pause – køb en sofa', cost: [1500, 2500], lvl: [3, 6], hx: 1.0, hz: 0.45, acc: 0, use: [seat(-0.45, 0.1, 'sit', [0, 1], { ax: -0.45, az: 0.95, h: 0.62 }), seat(0.45, 0.1, 'sit', [0, 1], { ax: 0.45, az: 0.95, h: 0.62 })] },
+  foosball: { name: 'Bordfodbold', icon: '⚽', cat: 'pause', decor: true, joy: 8, joyMax: 1, pause: true, label: '⚽ Bordfodbold', tip: '⚽ Et bordfodboldbord ville gøre pauserne sjovere', cost: [3500], lvl: [5], hx: 0.75, hz: 0.45, acc: 0, use: [seat(-1.1, 0, 'foos', [1, 0]), seat(1.1, 0, 'foos', [-1, 0])] },
+  arcade: { name: 'Arcade-maskine', icon: '🕹️', cat: 'pause', decor: true, joy: 8, joyMax: 1, pause: true, label: '🕹️ Arcade', cost: [3000], lvl: [6], hx: 0.4, hz: 0.35, acc: 0, use: [seat(0, 0.8, 'arcade', [0, -1])] },
+  pingpong: { name: 'Bordtennis', icon: '🏓', cat: 'pause', decor: true, joy: 9, joyMax: 1, pause: true, label: '🏓 Bordtennis', cost: [4500], lvl: [7], hx: 1.3, hz: 0.7, acc: 0, use: [seat(-1.65, 0, 'ping', [1, 0]), seat(1.65, 0, 'ping', [-1, 0])] },
+  plant: { name: 'Plante', icon: '🪴', cat: 'cozy', decor: true, joy: 4, joyMax: 3, label: '🪴 Planter', tip: '🪴 Savner lidt grønt – sæt en plante tæt på (i samme rum)', cost: [250, 250, 350, 350, 500, 500], lvl: [1, 1, 2, 2, 3, 3], hx: 0.3, hz: 0.3, acc: 0 },
+  rug: { name: 'Tæppe', icon: '🟪', cat: 'cozy', decor: true, walk: true, joy: 2, joyMax: 2, label: '🟪 Tæppe', cost: [300], lvl: [1], hx: 1.2, hz: 0.8, acc: 0 },
+  lamp: { name: 'Gulvlampe', icon: '💡', cat: 'cozy', decor: true, joy: 3, joyMax: 3, label: '💡 Hyggelys', desc: 'Tænder, når det bliver mørkt', cost: [450], lvl: [2], hx: 0.25, hz: 0.25, acc: 0 },
+  neon: { name: 'Neonskilt', icon: '🌈', cat: 'cozy', decor: true, joy: 3, joyMax: 1, label: '🌈 Neonskilt', cost: [1000], lvl: [3], hx: 0.7, hz: 0.15, acc: 0 },
+  speaker: { name: 'Højttaler', icon: '🎵', cat: 'cozy', decor: true, joy: 7, joyMax: 1, label: '🎵 Musik', tip: '🎵 Savner musik – sæt en højttaler tæt på (i samme rum)', cost: [800], lvl: [4], hx: 0.3, hz: 0.3, acc: 0, use: [seat(0.8, 0.2, 'dance', [-1, 0]), seat(-0.8, 0.2, 'dance', [1, 0])] },
+  aquarium: { name: 'Akvarium', icon: '🐠', cat: 'cozy', decor: true, joy: 6, joyMax: 1, label: '🐠 Akvarium', cost: [2500], lvl: [6], hx: 0.75, hz: 0.3, acc: 0 },
 };
 // There is no limit on furniture: after the listed prices each extra piece costs 25 % more than the one before,
 // and it needs the last listed level.
@@ -148,6 +176,61 @@ export const WALL_COST = 150;
 export const DOOR_COST = 400;
 // A room with break furniture and no work stations in it.
 export const BREAK_ROOM_JOY = 6;
+// Painting a room, per floor tile, and the colours to choose from.
+export const PAINT_COST = 15;
+export const FLOOR_COLORS = ['#f1ebe2', '#d9c2a3', '#b9c8d6', '#c9e4ca', '#f7d6e0', '#d8cff0', '#ffe8b3', '#9aa3ad'];
+export const WALL_COLORS = ['#fff3e3', '#ffd9c0', '#cfe8ff', '#d5f0d5', '#ffd6e5', '#e3d9ff', '#fff2a8', '#b9c2cc'];
+
+// Temporary jobs: anyone can help out elsewhere, slower and less happily, and their own job stands still meanwhile.
+// The pace starts at eff and improves by up to learn the more they've done that job. Help ends when the day ends.
+export const HELP = { eff: 0.55, learn: 0.25, learnTime: 900, joy: 8, joyMax: 20 };
+export const HELP_JOBS = {
+  pack: { icon: '📦', name: 'Pakning', role: 'packer' },
+  stock: { icon: '🧱', name: 'Lager', role: 'stocker' },
+  support: { icon: '🎧', name: 'Kundeservice', role: 'support' },
+};
+
+// The shop's year: the calendar repeats every YEAR days. traffic and ret multiply orders and returns.
+// goal: the season has an order target (rush × a normal day's orders); hitting it pays, missing it disappoints.
+export const YEAR = 24;
+export const SEASONS = [
+  { id: 'summer', name: 'Sommerferie', icon: '🏖️', day: 6, days: 3, lvl: 3, traffic: 0.8, vacation: true, desc: 'En tredjedel af de ansatte holder ferie, og der er færre kunder.' },
+  { id: 'school', name: 'Skolestart', icon: '🎒', day: 11, days: 2, lvl: 2, traffic: 1.4, desc: 'Alle skal have nyt tøj – 40 % flere kunder.' },
+  { id: 'bf', name: 'Black Friday', icon: '🖤', day: 16, days: 1, lvl: 4, traffic: 2.5, rush: 1.7, desc: 'Vanvittigt mange kunder på én dag. Fyld lageret, og flyt folk til pakning.' },
+  { id: 'xmas', name: 'Julehandel', icon: '🎄', day: 20, days: 3, lvl: 5, traffic: 1.7, rush: 1.4, desc: 'Pakkerne skal nå frem inden jul – travlt i tre dage.' },
+  { id: 'jan', name: 'Januarudsalg', icon: '🧾', day: 23, days: 2, lvl: 3, traffic: 0.85, ret: 1.6, desc: 'Julegaverne kommer retur, og kunderne har ingen penge.' },
+];
+// VAT is settled every TAX_EVERY days on what was sold since last time.
+export const TAX_EVERY = 8;
+export const TAX_RATE = 0.05;
+
+// The long game: each chapter has a few big goals and a reward.
+export const CHAPTERS = [
+  { name: 'Garagen', icon: '🏠', reward: { money: 1000, gems: 2 }, goals: [
+    { text: 'Send 25 ordrer', f: (s) => [s.stats.shipped, 25] },
+    { text: 'Ansæt din første medarbejder', f: (s) => [s.employees.length, 1] },
+  ] },
+  { name: 'Det første lager', icon: '📦', reward: { money: 3000, gems: 3 }, goals: [
+    { text: 'Tjen 25.000 kr i omsætning', f: (s) => [s.stats.revenue, 25000] },
+    { text: 'Hav 3 ansatte', f: (s) => [s.employees.length, 3] },
+    { text: 'Byg et rum med vægge', f: (s) => [Object.keys(s.walls).length, 4] },
+  ] },
+  { name: 'Den travle webshop', icon: '🚀', reward: { money: 10000, gems: 5 }, goals: [
+    { text: 'Nå level 8', f: (s) => [s.level, 8] },
+    { text: 'Nå målet i en travl sæson', f: (s) => [s.stats.seasonsWon || 0, 1] },
+    { text: 'Klar en firmaordre', f: (s) => [s.stats.contracts || 0, 1] },
+  ] },
+  { name: 'Den store virksomhed', icon: '🏢', reward: { money: 30000, gems: 8 }, goals: [
+    { text: 'Hav 10 ansatte', f: (s) => [s.employees.length, 10] },
+    { text: 'Tjen 250.000 kr i omsætning', f: (s) => [s.stats.revenue, 250000] },
+    { text: 'Send 1.000 ordrer', f: (s) => [s.stats.shipped, 1000] },
+  ] },
+  { name: 'Danmarks lykkeligste webshop', icon: '👑', reward: { money: 100000, gems: 20 }, goals: [
+    { text: 'Tjen 1 mio. kr i omsætning', f: (s) => [s.stats.revenue, 1000000] },
+    { text: 'Nå level 20', f: (s) => [s.level, 20] },
+    { text: 'Hav 90 i kundetilfredshed', f: (s) => [Math.round(s.satisfaction), 90] },
+  ] },
+];
 export const BOX_SLOTS = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ x: 11.8 + (i % 4) * 1.3, z: 2.2 + Math.floor(i / 4) * 1.3 }));
 export const DELIVERY_SPOT = { x: 13.75, z: 5.0 };
 export const PALLET = { x: 16.6, z: 15.7 };
@@ -232,9 +315,9 @@ export const CAMPAIGNS = [
 ];
 
 export const SHOP = [
-  { id: 'fb', name: 'Facebook-annoncer', icon: '📣', desc: '+50 % trafik i 90 sek', money: 600, lvl: 1, boost: { kind: 'traffic', mult: 0.5, dur: 90 } },
-  { id: 'google', name: 'Google Shopping', icon: '🔎', desc: '+80 % trafik i 120 sek', money: 2000, lvl: 4, boost: { kind: 'traffic', mult: 0.8, dur: 120 } },
-  { id: 'influencer', name: 'Influencer-samarbejde', icon: '🤳', desc: '+150 % trafik i 90 sek', gems: 8, lvl: 1, boost: { kind: 'traffic', mult: 1.5, dur: 90 } },
+  { id: 'fb', name: 'Facebook-annoncer', icon: '📣', desc: `+50 % trafik i ${gameTime(90)}`, money: 600, lvl: 1, boost: { kind: 'traffic', mult: 0.5, dur: 90 } },
+  { id: 'google', name: 'Google Shopping', icon: '🔎', desc: `+80 % trafik i ${gameTime(120)}`, money: 2000, lvl: 4, boost: { kind: 'traffic', mult: 0.8, dur: 120 } },
+  { id: 'influencer', name: 'Influencer-samarbejde', icon: '🤳', desc: `+150 % trafik i ${gameTime(90)}`, gems: 8, lvl: 1, boost: { kind: 'traffic', mult: 1.5, dur: 90 } },
   { id: 'express', name: 'Express-levering', icon: '⚡', desc: 'Alle varer på vej ankommer med det samme', gems: 2, lvl: 1, action: 'express' },
   { id: 'cash', name: 'Investor-møde', icon: '💼', desc: 'Få 5.000 kr til virksomheden', gems: 10, lvl: 1, action: 'cash' },
 ];
@@ -280,5 +363,6 @@ export function unlocksAt(level) {
   Object.values(UPGRADES).forEach((u) => u.levels.forEach((x, i) => i > 0 && x.lvl === level && out.push(`${u.icon} ${x.name}`)));
   SHOP.forEach((x) => x.lvl === level && level > 1 && out.push(`${x.icon} ${x.name}`));
   CAMPAIGNS.forEach((x) => x.lvl === level && out.push(`${x.icon} Kampagne: ${x.name}`));
+  Object.values(FURNITURE).forEach((F) => !F.slots && F.lvl[0] === level && level > 1 && out.push(`${F.icon} ${F.name}`));
   return out;
 }

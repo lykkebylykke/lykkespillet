@@ -1,16 +1,18 @@
 import * as THREE from 'three';
 import { mat, rbox, at, makeBox } from './world.js';
-import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, DOOR, productById, bossLook } from './data.js';
+import { ROLES, EMP_TIERS, IDLE, DELIVERY_SPOT, BOX_SLOTS, DOOR, FURNITURE, SUPPORT_RATE, HELP_JOBS, productById, bossLook } from './data.js';
 import {
   bus, upgVal, shelfAccepts, shelfHasOrder, takeBox, takeDrop, stockOne, claimOrder, releaseOrders, shipOrder, queuedCount,
   addBoost, addXP, activeCampaign, dutyOf, shelfAllows, misplaced, takeFromShelf,
 } from './state.js';
-import { empEff, breakRooms } from './sim.js';
+import { empEff, helpEff, breakRooms } from './sim.js';
 import { roomAt } from './rooms.js';
 
 const PLAYER_PACK = 1.6, EMP_PACK = 2.2;
-// Decor that's nice to spend a break by, and what the bubble shows there.
-const BREAK = { sofa: '🛋️', coffee: '☕', foosball: '⚽', speaker: '🎵' };
+// Everyone's own job; a temporary job (e.help) takes its place for a while.
+const OWN_JOB = { packer: 'pack', stocker: 'stock', some: 'desk', ecom: 'desk', support: 'desk' };
+// How far someone moves in from the desk's access spot to sit on its chair.
+const CHAIR = 0.24;
 // Shown behind the character creator before a boss exists.
 const DEFAULT_LOOK = { skin: '#ffd7b5', hair: '#e6be8a', hairStyle: 'short', shirt: '#ff5d8f', pants: '#2b2d42', hat: '#ffc300' };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -48,13 +50,40 @@ export function makeCharacter({ skin, hair, shirt, pants = '#3d405b', hat = null
   const carry = new THREE.Group();
   carry.position.set(0, 0.62, 0.36);
   g.add(carry);
-  root.userData = { g, legL, legR, armL, armR, carry, carrySig: '' };
+  // A cup in the right hand, shown on coffee breaks.
+  const cup = at(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 10), mat('#ffffff')), 0, -0.42, 0.08);
+  cup.visible = false;
+  armR.add(cup);
+  root.userData = { g, legL, legR, armL, armR, carry, cup, carrySig: '', seatH: 0.5 };
   root.traverse((o) => { o.castShadow = true; });
   return root;
 }
 
-export function animateCharacter(ch, t, moving, carrying, working) {
+// What people look like while using things. sitting: legs forward with the hips on the seat.
+const seated = (u) => { u.legL.rotation.x = u.legR.rotation.x = -1.3; u.g.position.y = u.seatH - 0.34; };
+const POSES = {
+  sit(u, t) { seated(u); u.armL.rotation.x = u.armR.rotation.x = -0.5 + Math.sin(t * 1.3) * 0.05; },
+  type(u, t) { seated(u); u.armL.rotation.x = -1.15 + Math.sin(t * 19) * 0.12; u.armR.rotation.x = -1.15 + Math.cos(t * 23) * 0.12; },
+  pack(u, t) { u.armL.rotation.x = -1 + Math.sin(t * 6) * 0.4; u.armR.rotation.x = -1 - Math.sin(t * 6) * 0.4; u.armL.rotation.z = -0.15; u.armR.rotation.z = 0.15; },
+  reach(u, t) { const w = Math.sin(t * 6.5); u.armL.rotation.x = -2.7 + w * 0.25; u.armR.rotation.x = -2.7 - w * 0.25; u.g.position.y = 0.05 + Math.abs(w) * 0.05; },
+  cup(u, t) { u.cup.visible = true; u.armL.rotation.x = 0; u.armR.rotation.x = -0.9 - Math.max(0, Math.sin(t * 0.9)) * 1.3; },
+  foos(u, t) { u.armL.rotation.x = -1.4 + Math.sin(t * 8) * 0.2; u.armR.rotation.x = -1.4 + Math.cos(t * 11) * 0.2; u.g.rotation.z = Math.sin(t * 5) * 0.05; },
+  ping(u, t) { u.cup.visible = false; u.armL.rotation.x = -0.4; u.armR.rotation.x = -1.3 + Math.sin(t * 5.6) * 0.5; u.g.rotation.z = Math.sin(t * 2.8) * 0.06; },
+  arcade(u, t) { u.armL.rotation.x = -1.25 + Math.sin(t * 15) * 0.14; u.armR.rotation.x = -1.25 + Math.cos(t * 19) * 0.14; },
+  dance(u, t) { u.g.rotation.z = Math.sin(t * 4) * 0.13; u.g.position.y = Math.abs(Math.sin(t * 8)) * 0.07; u.armL.rotation.x = -2.2 + Math.sin(t * 8) * 0.4; u.armR.rotation.x = -2.2 - Math.sin(t * 8) * 0.4; },
+};
+
+export function animateCharacter(ch, t, moving, carrying, working, pose = null) {
   const u = ch.userData;
+  u.g.rotation.z = 0;
+  u.armL.rotation.z = u.armR.rotation.z = 0;
+  u.cup.visible = false;
+  if (pose && !moving && POSES[pose]) {
+    u.legL.rotation.x = u.legR.rotation.x = 0;
+    u.g.position.y = 0;
+    POSES[pose](u, t);
+    return;
+  }
   const sw = moving ? Math.sin(t * 13) * 0.6 : 0;
   u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
   u.g.position.y = moving ? Math.abs(Math.sin(t * 13)) * 0.06 : Math.sin(t * 2) * 0.01;
@@ -90,7 +119,6 @@ export class Player {
     this.setLook(s.boss);
     this.zone = null; this.prog = 0; this.t = 0; this.moving = false;
     this.ring = world.addLabel('ring', '', () => this.pos.clone().setY(2));
-    this.hint = world.addLabel('hint', '', () => this.pos.clone().setY(2.35));
     this.tag = world.addLabel('name boss', '', () => this.pos.clone().setY(-0.05));
     this.setName(s.boss);
     this.heldTable = null;
@@ -179,7 +207,7 @@ export class Player {
   update(dt, input) {
     const s = this.s, w = this.w;
     this.t += dt;
-    const speed = upgVal(s, 'shoes') * (activeCampaign(s) ? 1.15 : 1); // adrenaline during campaigns
+    const speed = upgVal(s, 'shoes') * (activeCampaign(s) ? 1.15 : 1) * w.speedAt(this.pos.x, this.pos.z); // adrenaline during campaigns
     let mx = input.x, mz = input.z;
     if (Math.hypot(mx, mz) > 0.05) { if (this.path) this.stopPath(); }
     else if (this.path) {
@@ -229,7 +257,13 @@ export class Player {
     }
 
     const act = this.act = floor ? this.pickupAction(floor) : zone ? this.actionFor(zone) : null;
-    animateCharacter(this.mesh, this.t, this.moving, !!this.carry, act?.working && !this.moving);
+    // Using a station looks the part: sitting at the desk, reaching up the shelf, packing at the table.
+    const pose = act?.working && !this.moving ? { desk: 'type', table: 'pack', shelf: 'reach' }[zone?.type] : null;
+    if (pose) {
+      faceTowards(this.mesh, zone.fx, zone.fz, dt);
+      if (pose === 'type') { this.mesh.position.x += zone.fx * CHAIR; this.mesh.position.z += zone.fz * CHAIR; }
+    }
+    animateCharacter(this.mesh, this.t, this.moving, !!this.carry, act?.working && !this.moving, pose);
     if (act && !act.blocked && act.dur) {
       this.prog += dt;
       if (act.onTick) act.onTick();
@@ -237,8 +271,6 @@ export class Player {
       const pct = Math.min(1, this.prog / act.dur);
       this.ring.set(`<i style="--p:${(pct * 100).toFixed(0)}%"></i>`);
     } else this.ring.set('');
-    this.hint.set(act ? `<span class="${act.blocked ? 'bad' : act.dur ? '' : 'info'}">${act.label}</span>` : '');
-    this.hint.el.classList.toggle('lifted', !!this.ring.html);
   }
 
   actionFor(z) {
@@ -284,8 +316,8 @@ export class Player {
       w.tableRes[z.idx] = 'player';
       this.heldTable = z.idx;
       return {
-        label: 'Pakker ordre 📦', dur: PLAYER_PACK * upgVal(s, 'packTable'), working: true,
-        onTick: () => (w.tablePacking[z.idx] = s.time),
+        label: 'Pakker ordre 📦', dur: PLAYER_PACK * upgVal(s, 'packTable') * w.tables[z.idx].fast, working: true,
+        onTick: () => { w.tablePacking[z.idx] = s.time; w.tableProg[z.idx] = this.prog / (PLAYER_PACK * upgVal(s, 'packTable') * w.tables[z.idx].fast); },
         run: () => {
           const id = this.carry.orderIds.shift();
           shipOrder(s, id, new THREE.Vector3(w.tables[z.idx].x, 0, w.tables[z.idx].z));
@@ -336,7 +368,7 @@ class Worker {
     this.pos = new THREE.Vector3(spawn.x, 0, spawn.z);
     this.mesh.position.copy(this.pos);
     world.scene.add(this.mesh);
-    this.items = []; this.box = null; this.table = null; this.status = ''; this.working = false; this.moving = false;
+    this.items = []; this.box = null; this.table = null; this.status = ''; this.working = false; this.moving = false; this.pose = null;
     this.t = Math.random() * 10;
     this.dt = 0;
     this.bubble = world.addLabel('emp', '', () => this.pos.clone().setY(1.95));
@@ -354,6 +386,7 @@ class Worker {
   }
 
   get duty() { return dutyOf(this.s, this.d); }
+  get job() { return HELP_JOBS[this.d.help] ? this.d.help : OWN_JOB[this.d.role]; }
 
   // Off shift: out of the door and home. On a break: the sofa, the coffee bar or a chat with whoever else is on a break.
   *offDuty() {
@@ -381,6 +414,16 @@ class Worker {
     this.show(true);
     this.status = '👋';
     yield* this.step(DOOR.x, DOOR.z);
+    // Coat in the locker first, if there is one.
+    const lk = this.s.furniture.find((f) => f.type === 'lockers'), q = lk && this.w.seats(lk)[0];
+    if (q) {
+      this.status = '';
+      yield* this.walkTo(q.ax, q.az);
+      yield* this.face(q.fx, q.fz);
+      this.pose = 'reach';
+      yield* this.wait(0.7);
+      this.pose = null;
+    }
   }
 
   // A straight walk, used for the step through the door (outside isn't on the walking grid).
@@ -398,36 +441,52 @@ class Worker {
   }
 
   *takeBreak() {
-    const s = this.s;
+    const s = this.s, w = this.w, id = this.d.id;
     // A proper break room comes first.
-    const rooms = breakRooms(s), all = s.furniture.filter((f) => BREAK[f.type]), inRoom = all.filter((f) => rooms.has(roomAt(s, f.x, f.z)));
-    const spots = inRoom.length ? inRoom : all;
+    const rooms = breakRooms(s), all = s.furniture.filter((f) => FURNITURE[f.type].use && f.type !== 'lockers'), inRoom = all.filter((f) => rooms.has(roomAt(s, f.x, f.z)));
     this.status = '☕';
-    const f = spots.length ? spots[this.d.id % spots.length] : null;
-    // Stand around the spot so people on a break don't pile up in one place.
-    const a = (this.d.id * 2.4) % (Math.PI * 2), base = f ?? IDLE.office;
-    yield* this.walkTo(base.x + Math.cos(a) * 1.1, base.z + Math.sin(a) * 1.1);
-    if (f) yield* this.face(f.x - this.pos.x, f.z - this.pos.z);
+    const q = w.claimSeat(inRoom, id) ?? w.claimSeat(all, id);
+    if (q) {
+      yield* this.walkTo(q.ax, q.az);
+      if (q.sit) yield* this.step(q.x, q.z);
+      yield* this.face(q.fx, q.fz);
+      this.mesh.userData.seatH = q.h;
+      this.pose = q.pose;
+      while (this.duty === 'pause') {
+        w.useActive[q.f.id] = s.time + 1;
+        this.status = this.chatting() ? '💬' : '';
+        yield* this.wait(0.5);
+      }
+      this.pose = null;
+      if (q.sit) yield* this.step(q.ax, q.az);
+      w.releaseSeat(id);
+      return;
+    }
+    // Every seat taken (or no break furniture yet): stand around and eat a packed lunch.
+    const a = (id * 2.4) % (Math.PI * 2), base = all[id % (all.length || 1)] ?? IDLE.office;
+    yield* this.walkTo(base.x + Math.cos(a) * 1.6, base.z + Math.sin(a) * 1.6);
     while (this.duty === 'pause') {
-      const mate = [...this.crew.list.values()].some((o) => o !== this && !o.away && o.duty === 'pause' && Math.hypot(o.pos.x - this.pos.x, o.pos.z - this.pos.z) < 3);
-      this.status = mate ? '💬' : f ? BREAK[f.type] : '🥪';
+      this.status = this.chatting() ? '💬' : '🥪';
       yield* this.wait(0.5);
     }
   }
 
-  get mult() { return EMP_TIERS[this.d.tier].mult * (this.d.special === 'fast' ? 1.5 : 1) * empEff(this.s, this.d); }
+  chatting() { return [...this.crew.list.values()].some((o) => o !== this && !o.away && o.duty === 'pause' && Math.hypot(o.pos.x - this.pos.x, o.pos.z - this.pos.z) < 3); }
+
+  get mult() { return EMP_TIERS[this.d.tier].mult * (this.d.special === 'fast' ? 1.5 : 1) * empEff(this.s, this.d) * helpEff(this.d); }
 
   *wait(sec) { let t = sec; while (t > 0) { t -= this.dt; yield; } }
 
   *walkTo(x, z) {
     this.working = false;
+    this.pose = null;
     const path = this.w.findPath(this.pos.x, this.pos.z, x, z);
     const speed = 2.8 * Math.sqrt(this.mult);
     for (const wp of path) {
       for (;;) {
         const dx = wp.x - this.pos.x, dz = wp.z - this.pos.z, d = Math.hypot(dx, dz);
         if (d < 0.05) break;
-        const step = Math.min(d, speed * this.dt);
+        const step = Math.min(d, speed * this.dt * this.w.speedAt(this.pos.x, this.pos.z));
         this.pos.x += (dx / d) * step; this.pos.z += (dz / d) * step;
         faceTowards(this.mesh, dx, dz, this.dt);
         this.moving = true;
@@ -439,11 +498,15 @@ class Worker {
 
   *face(dx, dz) { for (let i = 0; i < 10; i++) { faceTowards(this.mesh, dx, dz, this.dt); yield; } }
 
+  // Each loop runs until the job changes (finishing what's in the hands first).
   *loop() {
-    const r = this.d.role;
-    if (r === 'packer') yield* this.packerLoop();
-    else if (r === 'stocker') yield* this.stockerLoop();
-    else yield* this.deskLoop();
+    for (;;) {
+      const j = this.job;
+      if (j === 'pack') yield* this.packerLoop();
+      else if (j === 'stock') yield* this.stockerLoop();
+      else if (j === 'support') yield* this.helpDeskLoop();
+      else yield* this.deskLoop();
+    }
   }
 
   *idle(spot) {
@@ -462,6 +525,7 @@ class Worker {
   *packerLoop() {
     const s = this.s, w = this.w;
     for (;;) {
+      if (!this.items.length && this.job !== 'pack') return;
       if (!this.items.length && this.duty !== 'work') { yield* this.offDuty(); continue; }
       if (!this.items.length) {
         const cap = this.d.tier >= 3 ? 3 : this.d.tier >= 1 ? 2 : 1;
@@ -490,10 +554,12 @@ class Worker {
             const o = claimOrder(s, this.d.id, sh.f);
             if (!o) break;
             this.working = true;
+            this.pose = 'reach';
             yield* this.wait(0.5 / this.mult);
             this.items.push(o.id);
           }
           this.working = false;
+          this.pose = null;
           if (!this.items.length) continue;
         }
       }
@@ -507,11 +573,14 @@ class Worker {
       yield* this.face(sp.fx, sp.fz);
       while (this.items.length) {
         this.working = true;
-        let left = (EMP_PACK * upgVal(s, 'packTable')) / this.mult;
-        while (left > 0) { left -= this.dt; w.tablePacking[t] = s.time; yield; }
+        this.pose = 'pack';
+        const total = (EMP_PACK * upgVal(s, 'packTable') * tb.fast) / this.mult;
+        let left = total;
+        while (left > 0) { left -= this.dt; w.tablePacking[t] = s.time; w.tableProg[t] = 1 - left / total; yield; }
         shipOrder(s, this.items.shift(), new THREE.Vector3(tb.x, 0, tb.z));
       }
       this.working = false;
+      this.pose = null;
       w.tableRes[t] = null;
       this.table = null;
     }
@@ -520,6 +589,7 @@ class Worker {
   *stockerLoop() {
     const s = this.s, w = this.w;
     for (;;) {
+      if (!this.box && this.job !== 'stock') return;
       if (!this.box && this.duty !== 'work') { yield* this.offDuty(); continue; }
       if (!this.box) {
         const fits = (b) => w.shelves.some((sh) => shelfAccepts(s, sh.f, b.productId));
@@ -527,7 +597,7 @@ class Worker {
         // Nothing to unpack: move items that stand on the wrong shelf over to their tagged shelf.
         if (!box && (yield* this.tidy())) continue;
         if (!box) {
-          this.status = !w.shelves.length ? '⚠️ Ingen reol' : waiting.length ? '⚠️ Ingen plads på reolerne' : '😴';
+          this.status = !w.shelves.length || waiting.length ? '⚠️ 🧱' : '😴';
           yield* this.idle(IDLE.stocker);
           continue;
         }
@@ -535,7 +605,7 @@ class Worker {
         yield* this.fetchBox(box);
         continue;
       }
-      if (!(yield* this.shelveBox()) && this.box) { this.status = '⚠️ Ingen plads på reolerne'; yield* this.wait(0.8); }
+      if (!(yield* this.shelveBox()) && this.box) { this.status = '⚠️ 🧱'; yield* this.wait(0.8); }
     }
   }
 
@@ -550,8 +620,10 @@ class Worker {
     yield* this.walkTo(sp.ax, sp.az);
     yield* this.face(sp.fx, sp.fz);
     this.working = true;
+    this.pose = 'reach';
     yield* this.wait(0.6 / this.mult);
     this.working = false;
+    this.pose = null;
     // Someone may have picked some meanwhile; take what's still wrong.
     const again = misplaced(s);
     if (again?.f !== m.f || again.pid !== m.pid) return true;
@@ -579,36 +651,74 @@ class Worker {
     const sh = w.shelfFor(this.pos.x, this.pos.z, pid);
     this.working = false;
     if (!sh) {
-      if (this.d.role === 'stocker') return false; // stockers wait for room
+      if (this.job === 'stock') return false; // stockers wait for room
       // A packer has orders to get back to: leave the box on the floor for later.
       this.box.carriedBy = null; this.box.at = { x: this.pos.x, z: this.pos.z }; this.box.slot = null; this.box = null;
       return false;
     }
-    this.status = this.d.role === 'packer' ? '↩️' : this.box.move ? '🏷️' : '';
+    this.status = this.job === 'pack' ? '↩️' : this.box.move ? '🏷️' : '';
     yield* this.walkTo(sh.ax, sh.az);
     yield* this.face(sh.fx, sh.fz);
     while (this.box.qty > 0 && shelfAccepts(s, sh.f, pid)) {
       this.working = true;
+      this.pose = 'reach';
       yield* this.wait(0.25 / this.mult);
       stockOne(s, this.box, sh.f);
     }
     this.working = false;
+    this.pose = null;
     if (this.box.qty <= 0) { this.box = null; this.status = ''; return false; }
     return true;
+  }
+
+  // Sit down on a desk's chair, and get up from it again.
+  *sitAt(dk) {
+    yield* this.walkTo(dk.ax, dk.az);
+    yield* this.step(dk.ax + dk.fx * CHAIR, dk.az + dk.fz * CHAIR);
+    yield* this.face(dk.fx, dk.fz);
+    this.mesh.userData.seatH = 0.5;
+    this.pose = 'type';
+    this.working = true;
+  }
+  *standUp(dk) {
+    this.working = false;
+    this.pose = null;
+    yield* this.step(dk.ax, dk.az);
   }
 
   *deskLoop() {
     const s = this.s, w = this.w;
     for (;;) {
+      if (this.job !== 'desk') return;
       if (this.duty !== 'work') { yield* this.offDuty(); continue; }
       const di = this.d.desk;
-      if (di == null || !w.desks[di]) { this.status = '⚠️ Mangler skrivebord'; yield* this.idle(IDLE.office); continue; }
-      this.status = ROLES[this.d.role].icon;
+      if (di == null || !w.desks[di]) { this.status = '⚠️ 🖥️'; yield* this.idle(IDLE.office); continue; }
+      this.status = '';
       const dk = w.desks[di];
-      yield* this.walkTo(dk.ax, dk.az);
-      yield* this.face(dk.fx, dk.fz);
-      this.working = true;
-      while (this.d.desk === di && this.duty === 'work') { w.deskActive[di] = s.time; yield; }
+      yield* this.sitAt(dk);
+      while (this.d.desk === di && this.duty === 'work' && this.job === 'desk') { w.deskActive[di] = s.time; yield; }
+      yield* this.standUp(dk);
+    }
+  }
+
+  // Helping with customer service: at their own desk, or any desk that is free.
+  *helpDeskLoop() {
+    const s = this.s, w = this.w, id = this.d.id;
+    for (;;) {
+      if (this.job !== 'support') return;
+      if (this.duty !== 'work') { yield* this.offDuty(); continue; }
+      const dk = w.desks[this.d.desk] ?? w.desks.find((d) => !s.employees.some((e) => e.desk === d.i) && !(w.deskHelp?.[d.i] && w.deskHelp[d.i] !== id));
+      if (!dk) { this.status = '⚠️ 🖥️'; yield* this.idle(IDLE.office); continue; }
+      (w.deskHelp ??= {})[dk.i] = id;
+      this.status = '';
+      yield* this.sitAt(dk);
+      while (this.job === 'support' && this.duty === 'work') {
+        s.ticketWork += SUPPORT_RATE[0] * upgVal(s, 'computer') * empEff(s, this.d) * helpEff(this.d) * this.dt;
+        w.deskActive[dk.i] = s.time;
+        yield;
+      }
+      yield* this.standUp(dk);
+      w.deskHelp[dk.i] = null;
     }
   }
 
@@ -622,8 +732,10 @@ class Worker {
     if (this.box) setCarry(this.mesh, s.boxes.includes(this.box) ? { kind: 'box', color: productById[this.box.productId].color } : null);
     else if (this.items.length) setCarry(this.mesh, { kind: 'items', colors: this.items.map((id) => productById[s.orders.find((o) => o.id === id)?.productId]?.color || '#fff') });
     else setCarry(this.mesh, null);
-    animateCharacter(this.mesh, this.t, this.moving, !!(this.box || this.items.length) && !this.working, this.working);
+    animateCharacter(this.mesh, this.t, this.moving, !!(this.box || this.items.length) && !this.working, this.working, this.pose);
     this.bubble.set(this.status ? `<span>${this.status}</span>` : '');
+    // With a big crew the name tags would fill the screen; tapping someone shows who they are.
+    this.tag.hidden = this.away || this.crew.list.size > 6;
   }
 
   destroy() {
@@ -633,6 +745,7 @@ class Worker {
     for (const b of s.boxes) if (b.claimedBy === this.d.id) b.claimedBy = null;
     for (const d of s.drops) if (d.claimedBy === this.d.id) d.claimedBy = null;
     if (this.table != null) this.w.tableRes[this.table] = null;
+    this.w.releaseSeat(this.d.id);
     this.w.scene.remove(this.mesh);
     this.bubble.remove();
     this.tag.remove();
@@ -656,4 +769,11 @@ export class Crew {
   add(e, spawn) { const k = new Worker(this.w, this.s, e, spawn); k.crew = this; this.list.set(e.id, k); }
 
   update(dt) { for (const k of this.list.values()) k.update(dt); }
+
+  // Who is at this spot on the ground (for tapping someone)?
+  at(p) {
+    let best = null, bd = 0.8;
+    for (const k of this.list.values()) { const d = k.away ? 9 : Math.hypot(k.pos.x - p.x, k.pos.z - p.z); if (d < bd) { bd = d; best = k; } }
+    return best?.d ?? null;
+  }
 }

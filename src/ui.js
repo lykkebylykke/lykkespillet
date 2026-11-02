@@ -1,22 +1,23 @@
 import {
   PRODUCTS, productById, TIER_COLORS, PRICE_MODES, ROLES, EMP_TIERS, SOME_BONUS, SOME_VIRAL, ECOM_BONUS,
-  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS, RETURN_FREIGHT, SHIFT, furnCost, furnLvl,
+  UPGRADES, SHOP, CAMPAIGNS, QUESTS, DAY_LENGTH, EXPENSES, LOANS, BANKRUPT_DAYS, TILE_COST, TILE_RENT, FURNITURE, PACKAGING, FREIGHT, rentOf, xpFor, MAX_LEVEL, unlocksAt, TREND, AUTO_TASKS, RETURN_FREIGHT, SHIFT, furnCost, furnLvl, SPEEDS, gameTime, HELP_JOBS, CHAPTERS,
 } from './data.js';
 import {
   bus, fmt, kr, capacity, stockTotal, available, upgVal, unitPrice, salaryOf, hire, fire, empUpgradeCost,
-  spend, addMoney, addXP, resetState, activeCampaign, setDesk, ownedFurniture, returnRate, returnFactors, listed, slotNow, clockText, pauseOf, dutyOf,
+  spend, addMoney, addXP, resetState, activeCampaign, setDesk, ownedFurniture, returnRate, returnFactors, listed, slotNow, clockText, pauseOf, dutyOf, helpOptions, activeSeason,
 } from './state.js';
 import {
-  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, loanBlock, happiness, happyEff,
+  effects, buyStock, buyFurniture, buyShop, advisor, dayReport, startCampaign, campaignDur, supportRate, takeLoan, repayLoan, loanRate, loanPayoff, loanBlock, happiness, happyEff, helpEff, helpPenalty, taxDue,
 } from './sim.js';
+import { CARDS, answerCard, upcoming, nextTax, taxSoFar } from './events.js';
 import { TILE } from './world.js';
 import { cloud, logout } from './cloud.js';
 
 const TABS = [
-  ['home', '🏠', 'Hjem'], ['staff', '👥', 'Ansatte'], ['orders', '🧾', 'Ordrer'], ['products', '👕', 'Produkter'],
-  ['shop', '🛍️', 'Butik'], ['upgrades', '⬆️', 'Upgrades'], ['stats', '📊', 'Økonomi'],
+  ['staff', '👥', 'Ansatte'], ['products', '👕', 'Varer'], ['shop', '📣', 'Marketing'], ['upgrades', '🛠️', 'Indret'], ['stats', '📊', 'Økonomi'],
 ];
-const TITLES = { staff: 'Ansatte', orders: 'Ordrer', products: 'Produkter', shop: 'Butik & kampagner', upgrades: 'Upgrades', stats: 'Økonomi' };
+const TITLES = { staff: 'Ansatte', products: 'Varer & ordrer', shop: 'Marketing & butik', upgrades: 'Indret & opgradér', stats: 'Økonomi' };
+const FURN_GROUPS = [['work', '🏭 Arbejde'], ['pause', '☕ Pause'], ['cozy', '🪴 Hygge']];
 const $ = (sel, el = document) => el.querySelector(sel);
 const pct = (v) => `${Math.round(v * 100)} %`;
 
@@ -29,6 +30,9 @@ export class UI {
     this.confirmFire = null;
     this.prodTab = 'mine';
     this.staffTab = 'team';
+    this.folds = new Set();
+    this.log = [];
+    this.panelOpen = false;
     this.build();
     this.bind();
   }
@@ -37,22 +41,22 @@ export class UI {
     const app = $('#app');
     app.insertAdjacentHTML('beforeend', `
       <div id="hud">
-        <div class="top">
-          <div class="chip money"><span class="ci">💰</span><div class="ct"><b id="h-money"></b><small>Din balance</small></div></div>
-          <div class="chip level"><div class="lvl" id="h-lvl"></div><div class="ct"><div class="xpbar"><i id="h-xp"></i></div><small><b id="h-lvtxt"></b><br><span id="h-xptxt"></span></small></div></div>
-          <div class="chip"><span class="ci">❤️</span><div class="ct"><b id="h-gems"></b><small>Hjerter</small></div></div>
-          <div class="chip"><span class="ci">👥</span><div class="ct"><b id="h-staff"></b><small>Ansatte</small></div></div>
+        <div class="topbar">
+          <button class="tb money" data-act="panel"><b id="h-money"></b></button>
+          <button class="tb lvlring" id="h-lvl" data-act="panel" title="Level"></button>
+          <button class="tb clock" data-act="panel"><span id="h-sky"></span><span class="ct"><b id="h-clock"></b><small id="h-day"></small></span></button>
+          <button class="tb sp" id="h-pause" data-act="pause" title="Pause (mellemrum)"></button>
+          <button class="tb sp" id="h-speed" data-act="speed" title="Skift fart"></button>
+          <button class="tb bell" data-act="panel" title="Overblik">🔔<i id="h-badge" hidden></i></button>
         </div>
-        <div class="panel">
-          <div class="dayrow"><b id="h-day"></b><div class="daybar"><i id="h-daybar"></i></div><small id="h-daytxt"></small><button id="questbtn" data-act="qmin:0" title="Vis mål"></button><button id="tipsbtn" data-act="tips:1" title="Vis tips">💡</button></div>
-          <button id="quest" class="quest"></button>
-          <button id="advisor" class="advisor"></button>
-        </div>
+        <button id="ticker" hidden></button>
         <div id="boosts"></div>
+        <div id="hudpanel" hidden></div>
       </div>
       <div id="sheet" class="sheet"><div class="sheet-head"><h2 id="sheet-title"></h2><button class="x" data-act="tab:home">✕</button></div><div class="sheet-body" id="sheet-body"></div></div>
       <nav id="nav">${TABS.map(([id, ic, name]) => `<button data-act="tab:${id}" data-tab="${id}"><span>${ic}</span><small>${name}</small></button>`).join('')}</nav>
       <div id="toasts"></div>
+      <div id="daycard"></div>
       <div id="modal"></div>
     `);
   }
@@ -64,13 +68,17 @@ export class UI {
       if (!b || b.disabled) return;
       this.act(b.dataset.act);
     });
-    document.addEventListener('pointerdown', (ev) => this.dragShift(ev));
+    document.addEventListener('pointerdown', (ev) => { this.pressing = !!ev.target.closest('#sheet, #hudpanel'); this.dragShift(ev); });
+    // Don't swap a menu's contents under the finger, or the tap goes nowhere.
+    addEventListener('pointerup', () => { this.pressing = false; });
+    addEventListener('pointercancel', () => { this.pressing = false; });
+    bus.on('closeSheet', () => this.open('home'));
     bus.on('toast', (t, cls, ms) => this.toast(t, cls, ms));
     bus.on('bankrupt', () => this.bankrupt());
     bus.on('shelfMenu', (f) => this.shelfMenu(f));
     if (s.bankrupt) this.bankrupt();
     bus.on('levelup', (l) => this.levelUp(l));
-    bus.on('dayEnd', (r) => this.toast(dayReport(r), 'day', 5000));
+    bus.on('dayEnd', (r) => this.dayCard(r));
     bus.on('ship', (rev, pos) => { this.w.popup(`+${fmt(rev)} kr`, pos, 'money'); bus.emit('sfx', 'coin'); });
     bus.on('built', (p) => { this.toast(`${p.icon} ${p.name} ${p.moved ? 'flyttet' : 'placeret'}!`, 'good'); bus.emit('sfx', p.moved ? 'pop' : 'level'); });
     bus.on('hired', (e) => this.toast(`👋 ${e.name} er startet som ${ROLES[e.role].name}!`, 'good'));
@@ -104,7 +112,27 @@ export class UI {
     const s = this.s;
     const [cmd, x, y] = a.split(':');
     bus.emit('sfx', 'click');
-    if (cmd === 'tab') { this.open(x); return; }
+    if (cmd === 'tab') { this.open(x === this.tab ? 'home' : x); return; }
+    if (cmd === 'panel') { this.panelOpen = !this.panelOpen; this.tick = 1; return; }
+    if (cmd === 'pause') { s.paused = !s.paused; this.tick = 1; return; }
+    if (cmd === 'speed') { s.speed = SPEEDS[s.speed].next; this.tick = 1; return; }
+    if (cmd === 'fold') { this.folds.has(x) ? this.folds.delete(x) : this.folds.add(x); this.renderSheet(true); this.tick = 1; return; }
+    if (cmd === 'help') {
+      const e = s.employees.find((k) => k.id === +x);
+      if (e) { e.help = y === 'own' ? null : y; e.helpT = 0; }
+    }
+    if (cmd === 'helpAll') {
+      const on = x === 'pack', staff = s.employees.filter((e) => (on ? e.role !== 'packer' : e.help));
+      for (const e of staff) { e.help = on ? 'pack' : null; e.helpT = 0; }
+      this.toast(on ? `🚨 ${staff.length} ${staff.length === 1 ? 'ansat hjælper' : 'ansatte hjælper'} nu med at pakke` : '🤝 Alle er tilbage på deres eget job', on ? 'event' : 'good');
+    }
+    if (cmd === 'cardPick') {
+      const res = answerCard(s, +x);
+      $('#modal').classList.remove('show');
+      if (res?.[0]) this.toast(res[0], res[1], 4500);
+      this.renderSheet(true);
+      return;
+    }
     if (cmd === 'buy') { if (!buyStock(s, x, +y)) this.toast('Ikke nok penge 💸', 'bad'); }
     if (cmd === 'buyQty') { if (!buyStock(s, x, 1, +y)) this.toast('Ikke nok penge 💸', 'bad'); else this.toast(`🚚 ${y} × ${productById[x].icon} ${productById[x].name} er bestilt`, 'good'); }
     if (cmd === 'price') s.priceMode[x] = y;
@@ -132,14 +160,12 @@ export class UI {
     }
     if (cmd === 'ptab') this.prodTab = x;
     if (cmd === 'stab') this.staffTab = x;
-    if (cmd === 'autoSet') { this.staffTab = 'team'; this.open('staff'); return; }
+    if (cmd === 'autoSet') { this.staffTab = 'team'; this.folds.add('boss'); this.open('staff'); return; }
     if (cmd === 'autoMove') {
       const L = s.auto.prio, i = L.indexOf(x), j = i + +y;
       if (j >= 0 && j < L.length) [L[i], L[j]] = [L[j], L[i]];
     }
     if (cmd === 'autoOff') s.auto.off = s.auto.off.includes(x) ? s.auto.off.filter((k) => k !== x) : [...s.auto.off, x];
-    if (cmd === 'qmin') s.hideQuest = x === '1';
-    if (cmd === 'tips') s.hideTips = x === '0';
     if (cmd === 'shelfTag') {
       const f = s.furniture.find((o) => o.id === +x);
       if (f) {
@@ -157,8 +183,8 @@ export class UI {
       return;
     }
     if (cmd === 'expand') { this.open('home'); bus.emit('expandStart'); return; }
-    if (cmd === 'advisor' && x) this.open(x);
-    if (cmd === 'closeModal') $('#modal').classList.remove('show');
+    if (cmd === 'advisor' && x) { this.panelOpen = false; this.open(x); }
+    if (cmd === 'closeModal') { $('#modal').classList.remove('show'); return; }
     if (cmd === 'loan') { if (takeLoan(s, x)) { this.toast(`🏦 ${kr(s.loans.at(-1).amount)} er sat ind på kontoen`, 'good'); bus.emit('sfx', 'coin'); } }
     if (cmd === 'repay') { if (!repayLoan(s, x)) this.toast('Ikke nok penge til at indfri lånet 💸', 'bad'); else this.toast('✅ Lånet er indfriet', 'good'); }
     if (cmd === 'restart') resetState();
@@ -168,7 +194,7 @@ export class UI {
   }
 
   open(tab) {
-    if (tab === 'buy') { tab = 'products'; this.prodTab = 'buy'; } else if (tab === 'products') this.prodTab = 'mine';
+    if (tab === 'buy') { tab = 'products'; this.prodTab = 'buy'; } else if (tab === 'orders') { tab = 'products'; this.prodTab = 'orders'; } else if (tab === 'products' && this.tab !== 'products') this.prodTab = 'mine';
     this.tab = tab;
     this.confirmFire = null;
     this.confirmReset = false;
@@ -178,6 +204,30 @@ export class UI {
   }
 
   get sheetOpen() { return this.tab !== 'home'; }
+  get modalOpen() { return $('#modal').classList.contains('show'); }
+  closePanel() { this.panelOpen = false; $('#hudpanel').hidden = true; }
+
+  // Open one employee's card (tapping someone in the shop).
+  openEmp(id) {
+    this.staffTab = 'team';
+    this.folds.add(`emp-${id}`);
+    this.closePanel();
+    this.open('staff');
+  }
+
+  // A one-line row that folds out to show the details. Which ones are open is remembered by key.
+  fold(key, { av, title, sub = '', action = '', body = '', cls = '' }) {
+    const open = this.folds.has(key);
+    return `<div class="card fold ${cls} ${open ? 'open' : ''}">
+      <div class="fhead" ${body ? `data-act="fold:${key}"` : ''}>${av}<div class="info"><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</div>${action}${body ? '<span class="fchev">›</span>' : ''}</div>
+      ${open && body ? `<div class="fbody">${body}</div>` : ''}</div>`;
+  }
+
+  // A heading that folds a whole group away; shut unless it's marked open from the start.
+  section(key, title, inner, startOpen = false) {
+    const open = this.folds.has(key) !== startOpen;
+    return `<button class="sechead ${open ? 'open' : ''}" data-act="fold:${key}"><span>${title}</span><span class="fchev">›</span></button>${open ? `<div class="secbody">${inner}</div>` : ''}`;
+  }
 
   // ---------- quests ----------
   quest() {
@@ -206,13 +256,18 @@ export class UI {
   }
 
   // ---------- notifications ----------
-  toast(text, cls = '', ms = 3200) {
+  toast(text, cls = '', ms = cls === 'good' ? 2200 : 3200) {
     const box = $('#toasts');
     const el = document.createElement('div');
     el.className = 'toast ' + cls;
     el.textContent = text;
+    // Everything goes in the log under 🔔; only what matters right now also pops up.
+    this.log.unshift({ text, at: `Dag ${this.s.day} ${clockText(Math.floor(slotNow(this.s)))}` });
+    this.log.length = Math.min(this.log.length, 12);
+    if (cls === 'quiet') return;
+    if ([...box.children].some((o) => o.textContent === text)) return;
     box.appendChild(el);
-    while (box.children.length > 3) box.firstChild.remove();
+    while (box.children.length > 2) box.firstChild.remove();
     setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, ms);
   }
 
@@ -239,6 +294,28 @@ export class UI {
       <div class="opts">${staff.length ? staff.map(btn).join('') : '<small>Ingen kontorfolk ansat endnu.</small>'}</div>
       <button class="btn ghost" data-act="closeModal">Luk</button></div>`;
     $('#modal').classList.add('show');
+  }
+
+  // The decision on the table; the game waits for an answer.
+  showCard() {
+    const s = this.s, { id, ctx } = s.card, c = CARDS[id];
+    if (c.valid && !c.valid(s, ctx)) { s.card = null; return; }
+    $('#modal').innerHTML = `<div class="card-modal decision">
+      <div class="burst">${c.icon}</div><h2>${c.title}</h2><p>${esc(c.text(s, ctx))}</p>
+      <div class="dopts">${c.options(s, ctx).map((o, i) => `<button class="btn ${i ? 'ghost' : ''}" data-act="cardPick:${i}" ${o.can && !o.can() ? 'disabled' : ''}>${o.label}<small>${o.sub}</small></button>`).join('')}</div></div>`;
+    $('#modal').classList.add('show');
+    bus.emit('sfx', 'pop');
+  }
+
+  // Evening: the screen dims for a moment and shows how the day went.
+  dayCard(r) {
+    if (this.s.bankrupt) return;
+    const profit = r.revenue - r.costs, el = $('#daycard');
+    this.log.unshift({ text: dayReport(r), at: `Dag ${r.day}` });
+    el.innerHTML = `<div><span>🌙</span><b>Dag ${r.day} er slut</b><em class="${profit < 0 ? 'neg' : ''}">${profit >= 0 ? '+' : ''}${kr(profit)}</em><small>${r.orders} ordrer · saldo ${kr(this.s.money)}</small></div>`;
+    el.classList.remove('show');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('show');
   }
 
   bankrupt() {
@@ -290,55 +367,129 @@ export class UI {
     const s = this.s;
     this.shownMoney += (s.money - this.shownMoney) * Math.min(1, dt * 6);
     if (Math.abs(s.money - this.shownMoney) < 1) this.shownMoney = s.money;
-    $('#h-money').textContent = fmt(this.shownMoney);
-    $('#h-money').parentElement.classList.toggle('neg', s.money < 0);
+    $('#h-money').textContent = `${fmt(this.shownMoney)} kr`;
+    $('#h-money').classList.toggle('neg', s.money < 0);
     this.tick += dt;
     if (this.tick < 0.25) return;
     this.tick = 0;
 
-    $('#h-lvl').textContent = s.level;
-    $('#h-xp').style.width = s.level >= MAX_LEVEL ? '100%' : `${(s.xp / xpFor(s.level)) * 100}%`;
-    $('#h-lvtxt').textContent = `Level ${s.level}`;
-    $('#h-xptxt').textContent = s.level >= MAX_LEVEL ? 'MAX' : `${fmt(s.xp)}/${fmt(xpFor(s.level))} XP`;
-    $('#h-gems').textContent = s.gems;
-    $('#h-staff').textContent = s.employees.length;
-    const dh = `Dag ${s.day}${s.redDays ? ` <span class="red">⚠️ ${s.redDays}/${BANKRUPT_DAYS}</span>` : ''}`;
+    const f = s.dayTime / DAY_LENGTH;
+    const xp = s.level >= MAX_LEVEL ? 1 : s.xp / xpFor(s.level);
+    const lv = $('#h-lvl');
+    lv.textContent = s.level;
+    lv.style.setProperty('--p', `${(xp * 100).toFixed(0)}%`);
+    $('#h-sky').textContent = f < 0.12 ? '🌅' : f < 0.72 ? '☀️' : f < 0.88 ? '🌇' : '🌙';
+    $('#h-clock').textContent = clockText(Math.floor(slotNow(s) * 6) / 6);
+    const dh = `Dag ${s.day}${s.redDays ? ` <i>⚠️${s.redDays}</i>` : ''}`;
     if (dh !== this.dayHtml) { this.dayHtml = dh; $('#h-day').innerHTML = dh; }
-    $('#h-daybar').style.width = `${(s.dayTime / DAY_LENGTH) * 100}%`;
-    $('#h-daytxt').textContent = `kl. ${clockText(Math.floor(slotNow(s) * 6) / 6)}`;
+    const paused = $('#h-pause'), sp = SPEEDS[s.speed];
+    paused.textContent = s.paused ? '▶' : '⏸';
+    paused.classList.toggle('on', s.paused);
+    const st = `${sp.icon}${sp.name}`;
+    if ($('#h-speed').textContent !== st) $('#h-speed').textContent = st;
 
-    const qs = this.quest();
-    const qEl = $('#quest');
-    const qh = (qs
-      ? `<span class="qi">🎯</span><b class="qt">${qs.q.text}</b>
-         ${qs.done ? `<span class="btn claim">Hent ${rewardText(qs.q.reward)}</span>` : `<small>${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}</small>${qs.q.tab ? '<span class="chev">›</span>' : ''}`}`
-      : `<span class="qi">🏆</span><b class="qt">Alle mål klaret – flere kommer snart!</b>`) + '<span class="hide" data-act="qmin:1" title="Minimér">–</span>';
-    if (qh !== this.questHtml) { this.questHtml = qh; qEl.innerHTML = qh; }
-    qEl.classList.toggle('done', !!qs?.done);
-    // Minimised: just a small 🎯 chip in the day row (green when there's a reward to collect).
-    qEl.hidden = s.hideQuest;
-    const qb = $('#questbtn');
-    qb.hidden = !s.hideQuest;
-    const qbt = qs ? (qs.done ? '🎯 Hent!' : `🎯 ${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}`) : '🏆';
-    if (qb.textContent !== qbt) qb.textContent = qbt;
-    qb.classList.toggle('done', !!qs?.done);
-    qEl.dataset.act = qs?.done ? 'claim' : `advisor:${qs?.q.tab || ''}`;
+    if (s.card && !this.modalOpen && !document.body.classList.contains('building')) this.showCard();
+    this.checkChapter();
 
-    const adv = advisor(s);
-    const advEl = $('#advisor');
-    const ah = `<span class="qi">💡</span><span class="qt">${adv.text}</span>${adv.tab ? '<span class="chev">›</span>' : ''}<span class="hide" data-act="tips:0" title="Skjul tips">✕</span>`;
-    if (ah !== this.advHtml) { this.advHtml = ah; advEl.innerHTML = ah; }
-    advEl.dataset.act = `advisor:${adv.tab || ''}`;
-    advEl.hidden = s.hideTips;
-    $('#tipsbtn').hidden = !s.hideTips;
+    const qs = this.quest(), adv = advisor(s), chap = this.chapterState();
+    const badge = (qs?.done ? 1 : 0) + (adv.calm ? 0 : 1);
+    const be = $('#h-badge');
+    be.hidden = !badge;
+    be.textContent = badge;
 
-    const camp = activeCampaign(s);
-    $('#boosts').innerHTML = (camp ? `<div class="boost camp"><span>${camp.icon}</span>${camp.name} · ${Math.ceil(camp.until - s.time)}s<i style="width:${((camp.until - s.time) / camp.total) * 100}%"></i></div>` : '') + s.boosts.map((b) => {
-      const left = Math.max(0, b.until - s.time);
-      return `<div class="boost"><span>${b.icon}</span>${b.name} · ${Math.ceil(left)}s<i style="width:${(left / b.total) * 100}%"></i></div>`;
-    }).join('') + this.trendChips();
+    // The one line under the bar: only the single most important thing right now, otherwise nothing.
+    const line = this.tickerLine(qs);
+    const te = $('#ticker');
+    te.hidden = !line;
+    if (line) {
+      if (line.html !== this.tickHtml) { this.tickHtml = line.html; te.innerHTML = line.html; }
+      te.dataset.act = line.act;
+      te.className = line.cls || '';
+    }
 
+    const bh = this.boostIcons();
+    if (bh !== this.boostHtml) { this.boostHtml = bh; $('#boosts').innerHTML = bh; }
+
+    const pe = $('#hudpanel');
+    pe.hidden = !this.panelOpen;
+    if (this.panelOpen && !this.pressing) {
+      const html = this.panelHtml(qs, adv, chap);
+      if (html !== this.panelLast) { this.panelLast = html; pe.innerHTML = html; }
+    }
     this.renderSheet();
+  }
+
+  tickerLine(qs) {
+    const s = this.s, season = activeSeason(s), c = s.contract, left = (t) => gameTime(Math.max(0, t - s.time));
+    if (s.paused) return { html: '⏸ Spillet er sat på pause – tryk ▶ for at fortsætte', act: 'pause', cls: 'paused' };
+    if (qs?.done) return { html: `🎯 Mål klaret: <b>hent ${rewardText(qs.q.reward)}</b>`, act: 'claim', cls: 'good' };
+    if (s.redDays >= 2) return { html: `⚠️ I minus ${s.redDays} dage i træk – konkurs efter ${BANKRUPT_DAYS}`, act: 'advisor:stats', cls: 'bad' };
+    if (s.outage?.until > s.time) return { html: `🔌 Webshoppen er nede · ${left(s.outage.until)}`, act: 'panel', cls: 'bad' };
+    if (c) return { html: `🏢 Firmaordre ${productById[c.pid].icon} <b>${c.done}/${c.n}</b> · ${left(c.until)} tilbage`, act: 'advisor:orders', cls: 'event' };
+    if (s.season?.goal && season) return { html: `${season.icon} ${season.name}: <b>${s.stats.shipped - s.season.from}/${s.season.goal}</b> ordrer`, act: 'panel', cls: 'event' };
+    if (qs && s.quest < 9 && !qs.done) return { html: `🎯 ${qs.q.text}${qs.target > 1 ? ` <b>${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}</b>` : ''}`, act: `advisor:${qs.q.tab || ''}` };
+    return null;
+  }
+
+  // Small icons for what's running right now; the details are one tap away under 🔔.
+  boostIcons() {
+    const s = this.s, camp = activeCampaign(s), season = activeSeason(s);
+    const chip = (icon, cls = '', p = null) => `<button class="boost ${cls}" data-act="panel">${icon}${p != null ? `<i style="width:${(p * 100).toFixed(0)}%"></i>` : ''}</button>`;
+    return [
+      season && chip(season.icon, 'trend'),
+      camp && chip(camp.icon, 'camp', (camp.until - s.time) / camp.total),
+      ...s.boosts.map((b) => chip(b.icon, '', Math.max(0, b.until - s.time) / b.total)),
+      s.trend && chip(`🔥${productById[s.trend.id].icon}`, 'trend'),
+      s.flop && chip(`📉${productById[s.flop.id].icon}`, 'flop'),
+      s.employees.some((e) => e.help) && chip('🤝', 'trend'),
+    ].filter(Boolean).join('');
+  }
+
+  // The overview under 🔔: level, goals, the advisor's tip, what's coming and what has happened.
+  panelHtml(qs, adv, chap) {
+    const s = this.s, camp = activeCampaign(s), days = (d) => (d === 1 ? 'i dag' : `${d} dage`), season = activeSeason(s);
+    const left = (t) => gameTime(Math.max(0, t - s.time));
+    const xpTxt = s.level >= MAX_LEVEL ? 'MAX' : `${fmt(s.xp)}/${fmt(xpFor(s.level))} XP`;
+    const running = [
+      season && `${season.icon} ${season.name} · ${season.desc}`,
+      camp && `${camp.icon} ${camp.name} · ${left(camp.until)}`,
+      ...s.boosts.map((b) => `${b.icon} ${b.name} · ${left(b.until)}`),
+      s.trend && `🔥 ${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender · ${days(s.trend.days)}`,
+      s.flop && `📉 ${productById[s.flop.id].icon} ${productById[s.flop.id].name} er ude · ${days(s.flop.days)}`,
+    ].filter(Boolean);
+    const next = upcoming(s).slice(0, 2).map((x) => `<small>${x.in === 1 ? 'I morgen' : `Om ${x.in} dage`}: ${x.icon} ${x.name}</small>`);
+    if (s.level >= 3) next.unshift(`<small>${nextTax(s) ? `Om ${nextTax(s)} ${nextTax(s) === 1 ? 'dag' : 'dage'}` : 'I aften'}: 🧾 Moms ca. ${kr(taxSoFar(s))}</small>`);
+    return `<div class="pstats"><div class="plv"><b>⭐ Level ${s.level}</b><div class="xpbar"><i style="width:${s.level >= MAX_LEVEL ? 100 : (s.xp / xpFor(s.level)) * 100}%"></i></div><small>${xpTxt}</small></div>
+        <span>❤️ <b>${s.gems}</b></span><span>👥 <b>${s.employees.length}</b></span></div>
+      ${qs ? `<button class="quest ${qs.done ? 'done' : ''}" data-act="${qs.done ? 'claim' : `advisor:${qs.q.tab || ''}`}"><span class="qi">🎯</span><b class="qt">${qs.q.text}</b>${qs.done ? `<span class="btn claim">Hent ${rewardText(qs.q.reward)}</span>` : `<small>${fmtGoal(qs.cur)}/${fmtGoal(qs.target)}</small>`}</button>` : ''}
+      <button class="advisor" data-act="advisor:${adv.tab || ''}"><span class="qi">💡</span><span class="qt">${adv.text}</span>${adv.tab ? '<span class="chev">›</span>' : ''}</button>
+      ${chap ? `<div class="pblock"><b>${chap.c.icon} Kapitel ${s.chapter + 1}: ${chap.c.name}</b>${chap.goals.map((g) => `<small class="${g.done ? 'pos' : ''}">${g.done ? '✅' : '▫️'} ${g.text}${g.done ? '' : ` (${fmtGoal(g.cur)}/${fmtGoal(g.target)})`}</small>`).join('')}</div>` : ''}
+      ${running.length ? `<div class="pblock"><b>I gang nu</b>${running.map((r) => `<small>${r}</small>`).join('')}</div>` : ''}
+      ${next.length ? `<div class="pblock"><b>📅 På vej</b>${next.join('')}</div>` : ''}
+      ${this.log.length ? `<div class="pblock"><b>Beskeder</b>${this.log.slice(0, 6).map((l) => `<small>${l.text}</small>`).join('')}</div>` : ''}`;
+  }
+
+  chapterState() {
+    const s = this.s, c = CHAPTERS[s.chapter];
+    if (!c) return null;
+    const goals = c.goals.map((g) => { const [cur, target] = g.f(s); return { text: g.text, cur: Math.min(cur, target), target, done: cur >= target }; });
+    return { c, goals, done: goals.every((g) => g.done) };
+  }
+
+  // A finished chapter pays out and opens the next one.
+  checkChapter() {
+    const st = this.chapterState(), s = this.s;
+    if (!st?.done || this.modalOpen) return;
+    const r = st.c.reward;
+    addMoney(s, r.money);
+    s.gems += r.gems;
+    s.chapter++;
+    const next = CHAPTERS[s.chapter];
+    bus.emit('sfx', 'fanfare');
+    $('#modal').innerHTML = `<div class="card-modal"><div class="burst">${st.c.icon}</div><h2>Kapitel klaret!</h2><p>${st.c.name}</p><p>${rewardText(r)}</p>
+      ${next ? `<h4>Næste kapitel</h4><p>${next.icon} ${next.name}</p>` : '<p>Du har bygget Danmarks lykkeligste webshop! 👑</p>'}
+      <button class="btn big" data-act="closeModal">Videre!</button></div>`;
+    $('#modal').classList.add('show');
   }
 
   // How often parcels come back, what drives it and what would help.
@@ -354,13 +505,7 @@ export class UI {
       <small>Returvarer kommer med morgenbilen. Kunden får pengene tilbage + ${kr(RETURN_FREIGHT)} i returfragt pr. vare, og varen skal på reolen igen – lagerfolk og ledige pakkere tager dem. ${real}</small>
       <small class="hwhy">${f.filter(([, m]) => Math.abs(m - 1) > 0.005).map(([n, m]) => `${n} ${m < 1 ? '−' : '+'}${Math.abs(Math.round((m - 1) * 100))} %`).join(' · ')}</small>
       ${tips.length ? `<div class="htips">${tips.map((t) => `<small>💡 ${t}</small>`).join('')}</div>` : ''}
-      <small>Tøj der skal passe (jeans, kjoler, sko) kommer oftest retur – tilbehør næsten aldrig.</small></div></div>`;
-  }
-
-  trendChips() {
-    const s = this.s, days = (d) => (d === 1 ? 'i dag' : `${d} dage`);
-    return (s.trend ? `<div class="boost trend" data-act="tab:buy"><span>🔥</span>${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender · ${days(s.trend.days)}</div>` : '')
-      + (s.flop ? `<div class="boost flop"><span>📉</span>${productById[s.flop.id].icon} ${productById[s.flop.id].name} er ude · ${days(s.flop.days)}</div>` : '');
+</div></div>`;
   }
 
   trendTag(id) {
@@ -369,7 +514,7 @@ export class UI {
   }
 
   renderSheet(force) {
-    if (!this.sheetOpen) return;
+    if (!this.sheetOpen || (this.pressing && !force)) return;
     const html = this['r_' + this.tab]();
     if (force || html !== this.lastSheet) { this.lastSheet = html; $('#sheet-body').innerHTML = html; }
   }
@@ -378,56 +523,61 @@ export class UI {
   r_staff() {
     const s = this.s;
     const team = s.employees.map((e) => {
-      const R = ROLES[e.role], up = empUpgradeCost(e);
-      return `<div class="card">
-        <div class="av" style="background:${R.color}">${R.icon}</div>
-        <div class="info"><b>${e.name} <span class="tag">${EMP_TIERS[e.tier].name}</span></b>
-          <small>${R.name} · Løn ${kr(salaryOf(e))}/dag</small>
-          <small>🗓️ ${clockText(e.shift.a)}–${clockText(e.shift.b)} · ${DUTY[dutyOf(s, e)]}</small>
+      const R = ROLES[e.role], up = empUpgradeCost(e), { v } = happiness(s, e), face = v >= 70 ? '😄' : v >= 45 ? '🙂' : v >= 25 ? '😐' : '😟';
+      const job = e.help ? `🤝 ${HELP_JOBS[e.help].name}` : DUTY_SHORT[dutyOf(s, e)];
+      return this.fold(`emp-${e.id}`, {
+        av: `<div class="av" style="background:${R.color}">${R.icon}</div>`,
+        title: `${esc(e.name)} ${e.tier ? `<span class="tag">${EMP_TIERS[e.tier].name}</span>` : ''}`,
+        sub: `${R.name} · ${job}${R.desk && e.desk == null ? ' · <span class="warn">⚠️ Intet skrivebord</span>' : ''}`,
+        action: `<span class="face">${face}</span>`,
+        body: `<small>Løn ${kr(salaryOf(e))}/dag · 🗓️ ${clockText(e.shift.a)}–${clockText(e.shift.b)}${e.awayDay >= s.day ? ' · 🏖️ Væk' : ''}</small>
           <small class="eff">${this.effectText(e)}</small>
           ${e.special ? `<small class="special">✨ ${e.specialDesc}</small>` : ''}
-          ${R.desk && e.desk == null ? '<small class="warn">⚠️ Mangler skrivebord</small>' : ''}
           ${this.happyBar(e)}
-        </div>
-        <div class="btns">
-          ${up != null ? `<button class="btn" data-act="upEmp:${e.id}" ${s.money < up ? 'disabled' : ''}>⬆ ${EMP_TIERS[e.tier + 1].name}<small>${kr(up)}</small></button>` : '<span class="tag gold">MAX</span>'}
-          <button class="btn ghost" data-act="fire:${e.id}">${this.confirmFire === e.id ? 'Sikker?' : 'Afskedig'}</button>
-        </div></div>`;
-    }).join('') || '<p class="empty">Du laver alt selv lige nu. Ansæt dit første teammedlem herunder!</p>';
+          <small class="hlabel">Midlertidig opgave${e.help ? ` · ${Math.round(helpEff(e) * 100)} % tempo, −${helpPenalty(e)} glæde` : ''}</small>
+          <div class="seg"><button class="${e.help ? '' : 'on'}" data-act="help:${e.id}:own">Eget job</button>${helpOptions(e).map((k) => `<button class="${e.help === k ? 'on' : ''}" data-act="help:${e.id}:${k}">${HELP_JOBS[k].icon} ${HELP_JOBS[k].name}</button>`).join('')}</div>
+          <div class="fact">${up != null ? `<button class="btn" data-act="upEmp:${e.id}" ${s.money < up ? 'disabled' : ''}>⬆ ${EMP_TIERS[e.tier + 1].name}<small>${kr(up)}</small></button>` : '<span class="tag gold">MAX</span>'}
+            <button class="btn ghost" data-act="fire:${e.id}">${this.confirmFire === e.id ? 'Sikker?' : 'Afskedig'}</button></div>`,
+      });
+    }).join('') || '<p class="empty">Du laver alt selv lige nu. Ansæt dit første teammedlem under 🤝 Ansæt.</p>';
     const cands = s.candidates.map((c) => {
       const R = ROLES[c.role];
-      return `<div class="card ${c.special ? 'rare' : ''}">
-        <div class="av" style="background:${R.color}">${R.icon}</div>
-        <div class="info"><b>${c.name} ${c.special ? '<span class="tag gold">SJÆLDEN</span>' : '<span class="tag">Junior</span>'}</b>
-          <small>${R.name}</small><small class="eff">${R.desc}</small>
-          ${c.special ? `<small class="special">✨ ${c.specialDesc}</small>` : ''}
-          <small>Løn ${kr(Math.round(R.salary * (c.special ? 1.3 : 1)))}/dag</small></div>
-        <div class="btns"><button class="btn" data-act="hire:${c.cid}" ${s.money < c.cost ? 'disabled' : ''}>Ansæt<small>${kr(c.cost)}</small></button></div></div>`;
+      return this.fold(`cand-${c.cid}`, {
+        av: `<div class="av" style="background:${R.color}">${R.icon}</div>`,
+        cls: c.special ? 'rare' : '',
+        title: `${esc(c.name)} ${c.special ? '<span class="tag gold">SJÆLDEN</span>' : ''}`,
+        sub: `${R.name} · ${kr(Math.round(R.salary * (c.special ? 1.3 : 1)))}/dag`,
+        action: `<button class="btn" data-act="hire:${c.cid}" ${s.money < c.cost ? 'disabled' : ''}>Ansæt<small>${kr(c.cost)}</small></button>`,
+        body: `<small class="eff">${R.desc}</small>${c.special ? `<small class="special">✨ ${c.specialDesc}</small>` : ''}`,
+      });
     }).join('');
-    const locked = Object.values(ROLES).filter((r) => r.lvl > s.level).map((r) => `<div class="locked">🔒 ${r.icon} ${r.name} · Level ${r.lvl}</div>`).join('');
-    const hireTab = this.staffTab === 'hire', st = this.staffTab;
-    const tab = (id, label) => `<button class="${st === id ? 'on' : ''}" data-act="stab:${id}">${label}</button>`;
-    const tabs = `<div class="seg subtabs">${tab('team', `👥 Personale (${s.employees.length})`)}${tab('plan', '🗓️ Vagtplan')}${tab('hire', `🤝 Ansæt (${s.candidates.length})`)}</div>`;
+    const locked = Object.values(ROLES).filter((r) => r.lvl > s.level).sort((a, b) => a.lvl - b.lvl)[0];
+    const st = this.staffTab, tab = (id, label) => `<button class="${st === id ? 'on' : ''}" data-act="stab:${id}">${label}</button>`;
+    const tabs = `<div class="seg subtabs">${tab('team', `👥 Team (${s.employees.length})`)}${tab('plan', '🗓️ Vagter')}${tab('hire', `🤝 Ansæt (${s.candidates.length})`)}</div>`;
     if (st === 'plan') return tabs + this.r_plan();
-    return tabs + (hireTab
-      ? `<p class="tip">Nye kandidater hver dag.</p>${cands || '<p class="empty">Ingen kandidater endnu – nå level 2 for at kunne ansætte.</p>'}${locked}`
-      : `${this.autoCard()}<p class="tip">😊 <b>Glæde giver tempo:</b> en medarbejder på 0 arbejder i 75 % tempo, på 50 i 100 % og på 100 i 125 %. Pynt tæt på deres arbejdsplads, kolleger i samme område og ro i økonomien gør dem gladere.</p>${team.replace('Ansæt dit første teammedlem herunder!', 'Ansæt dit første teammedlem under 🤝 Ansæt.')}`);
+    if (st === 'hire') return tabs + (cands || '<p class="empty">Nå level 2 for at kunne ansætte. Nye kandidater hver dag.</p>') + (locked ? `<div class="locked">🔒 Næste: ${locked.icon} ${locked.name} · Level ${locked.lvl}</div>` : '');
+    const helping = s.employees.filter((e) => e.help).length, others = s.employees.some((e) => e.role !== 'packer');
+    const rush = helping ? `<button class="btn ghost wide rush" data-act="helpAll:stop">🤝 ${helping} hjælper til · Tilbage til eget job</button>`
+      : others ? '<button class="btn wide rush" data-act="helpAll:pack">🚨 Alle mand til pakning<small>Langsommere og mindre glade, og deres eget job står stille</small></button>' : '';
+    return tabs + rush + this.autoCard() + team;
   }
 
-  // The boss's autopilot: on/off and the priority list.
+  // The boss's priority list.
   autoCard() {
     const s = this.s, L = s.auto.prio;
     const rows = L.map((id, i) => {
       const T = AUTO_TASKS[id], off = s.auto.off.includes(id);
       return `<div class="aprio ${off ? 'off' : ''}">
-        <b>${i + 1}</b><div><span>${T.icon} ${T.name}</span><small>${T.desc}</small></div>
+        <b>${i + 1}</b><div><span>${T.icon} ${T.name}</span></div>
         <button data-act="autoMove:${id}:-1" ${i ? '' : 'disabled'}>▲</button><button data-act="autoMove:${id}:1" ${i < L.length - 1 ? '' : 'disabled'}>▼</button>
         <button class="tgl ${off ? '' : 'on'}" data-act="autoOff:${id}">${off ? 'Fra' : 'Til'}</button></div>`;
     }).join('');
-    return `<div class="card autocard"><div class="av" style="background:#ffd166">👑</div>
-      <div class="info"><b>${esc(s.boss?.name || 'Chefen')} <span class="tag gold">Chef</span></b>
-        <small>Chefen arbejder selv efter listen – øverst først. Træk i skærmen for at se dig omkring, og tryk på en reol eller et skrivebord for at indstille den.</small>
-        <div class="aprios">${rows}</div></div></div>`;
+    return this.fold('boss', {
+      av: '<div class="av" style="background:#ffd166">👑</div>',
+      title: `${esc(s.boss?.name || 'Chefen')} <span class="tag gold">Chef</span>`,
+      sub: 'Arbejder selv efter din prioritetsliste',
+      body: `<div class="aprios">${rows}</div>`,
+    });
   }
 
   // Shift planner: one bar per employee on a 07:00–18:30 timeline. Drag a bar to move it, drag its ends to change hours.
@@ -449,10 +599,10 @@ export class UI {
       return `<i class="c${Math.min(n, 4)}" title="${clockText(k)}: ${n} på arbejde">${n || ''}</i>`;
     }).join('');
     const wages = s.employees.reduce((a, e) => a + salaryOf(e), 0);
-    return `<p class="tip">Træk i en vagt for at flytte den, og i enderne for at ændre hvornår de møder ind og går hjem. Højst 8 timer – pausen (10 %, stribet) ligger midt i vagten. Lønnen følger timerne: <b>${kr(wages)}/dag</b>.</p>
+    return `<p class="tip">Træk i en vagt for at flytte den, eller i enderne for at ændre længden. Løn: <b>${kr(wages)}/dag</b>.</p>
       <div class="plan"><div class="prow head"><div class="pwho"></div><div class="ptrack hours">${hours}</div></div>${rows}
         <div class="prow cover"><div class="pwho"><b>Bemanding</b><small>på arbejde</small></div><div class="ptrack">${cover}</div></div></div>
-      <p class="tip">Uden for vagten går de hjem gennem døren. I pausen sætter de sig i sofaen, ved kaffebaren eller snakker med andre, der også holder pause.</p>`;
+`;
   }
 
   // Satisfaction bar going from red (unhappy) to green (happy), with the reasons underneath.
@@ -460,7 +610,7 @@ export class UI {
     const { v, why, tips } = happiness(this.s, e), face = v >= 70 ? '😄' : v >= 45 ? '🙂' : v >= 25 ? '😐' : '😟';
     return `<div class="happy"><span>${face}</span><div class="hbar"><i style="width:${v}%;background:hsl(${Math.round(v * 1.2)},70%,50%)"></i></div><b>${v}</b></div>
       <small class="hwhy">⚡ Arbejdstempo <b>${Math.round(happyEff(v) * 100)} %</b>${why.length ? ` · ${why.join(' · ')}` : ''}</small>
-      ${tips.length ? `<div class="htips">${tips.slice(0, 3).map((t) => `<small>💭 ${t}</small>`).join('')}</div>` : ''}`;
+      ${tips.length ? `<div class="htips">${tips.slice(0, 2).map((t) => `<small>💭 ${t}</small>`).join('')}</div>` : ''}`;
   }
 
   effectText(e) {
@@ -478,7 +628,7 @@ export class UI {
     const sat = s.satisfaction;
     const rows = s.orders.slice(0, 40).map((o) => {
       const p = productById[o.productId], wait = Math.floor(s.time - o.t);
-      return `<div class="row"><span class="ic">${p.icon}</span><div class="info"><b>#${o.id} ${p.name}</b><small class="${wait > 90 ? 'warn' : ''}">Venter ${wait} sek</small></div>
+      return `<div class="row"><span class="ic">${p.icon}</span><div class="info"><b>#${o.id} ${p.name}</b><small class="${wait > 90 ? 'warn' : ''}">Venter ${gameTime(wait)}${o.b2b ? ' · 🏢 Firmaordre' : ''}</small></div>
         <span class="tag ${o.status === 'queued' ? '' : 'blue'}">${o.status === 'queued' ? 'I kø' : `Plukket af ${who(o.by)}`}</span></div>`;
     }).join('') || '<p class="empty">Ingen ordrer i kø lige nu.</p>';
     return `<div class="grid3">
@@ -491,14 +641,13 @@ export class UI {
         <div class="stat"><small>Besvaret i alt</small><b>${s.stats.ticketsSolved}</b></div>
         <div class="stat"><small>Kampagner kørt</small><b>${s.stats.campaigns}</b></div>
       </div>
-      <p class="tip">Hurtig levering gør kunderne glade – ordrer der venter over 90 sek. sænker tilfredsheden og dermed trafikken.</p>
       <h3>Ordrekø (${s.orders.length})</h3>${rows}`;
   }
 
   r_products() {
-    const s = this.s, buy = this.prodTab === 'buy';
-    const tabs = `<div class="seg subtabs"><button class="${buy ? '' : 'on'}" data-act="ptab:mine">👕 Mine produkter</button><button class="${buy ? 'on' : ''}" data-act="ptab:buy">🛒 Indkøb</button></div>`;
-    return tabs + (buy ? this.r_buy() : this.r_mine());
+    const t = this.prodTab, tab = (id, label) => `<button class="${t === id ? 'on' : ''}" data-act="ptab:${id}">${label}</button>`;
+    const tabs = `<div class="seg subtabs">${tab('mine', '👕 Mine')}${tab('buy', '🛒 Indkøb')}${tab('orders', `🧾 Ordrer (${this.s.orders.length})`)}</div>`;
+    return tabs + (t === 'buy' ? this.r_buy() : t === 'orders' ? this.r_orders() : this.r_mine());
   }
 
   // Products the shop sells or has sold.
@@ -507,112 +656,105 @@ export class UI {
     const transit = (id) => s.deliveries.filter((d) => d.productId === id).reduce((a, d) => a + d.qty, 0) + s.boxes.filter((b) => b.productId === id).reduce((a, b) => a + b.qty, 0);
     const mine = PRODUCTS.filter((p) => s.everStocked[p.id] || transit(p.id));
     if (!mine.length) return '<p class="empty">Du har ingen varer i shoppen endnu. Køb dem hjem under 🛒 Indkøb.</p>';
-    return `<p class="tip">Lager: <b>${stockTotal(s)}/${capacity(s)}</b> · Varer der er bestilt men ikke plukket, står stadig på reolen.</p>${this.returnsCard()}` + mine.map((p) => {
+    return `<p class="tip">Lager: <b>${stockTotal(s)}/${capacity(s)}</b></p>` + mine.map((p) => {
       const price = unitPrice(s, p), mode = s.priceMode[p.id] || 'normal';
       const stock = s.stock[p.id] || 0, tr = transit(p.id), free = Math.max(0, available(s, p.id));
-      return `<div class="card prod">
-        <div class="av big" style="background:${p.color}33">${p.icon}</div>
-        <div class="info">
-          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${this.trendTag(p.id)}${stock ? '' : ' <span class="tag hot">Udsolgt</span>'}</b>
-          <small>På reolen: <b class="${free ? '' : 'warn'}">${stock}</b>${stock !== free ? ` (${stock - free} bestilt)` : ''}${tr ? ` · På vej: ${tr}` : ''} · Solgt: ${s.sold[p.id] || 0}</small>
-          <small>Salgspris ${kr(price)} · Margin <b>${kr(price - p.cost)}</b> · ↩️ Retur ca. <b class="${returnRate(s, p) >= 0.2 ? 'warn' : ''}">${Math.round(returnRate(s, p) * 100)} %</b>${s.returned[p.id] ? ` (${s.returned[p.id]} sendt retur)` : ''}</small>
-          <button class="btn quick" data-act="buyQty:${p.id}:10" ${s.money < p.cost * 10 ? 'disabled' : ''}>🛒 Køb 10 stk · ${kr(p.cost * 10)}</button>
-          <div class="seg">${Object.entries(PRICE_MODES).map(([k, m]) => `<button class="${k === mode ? 'on' : ''}" data-act="price:${p.id}:${k}">${m.name} pris</button>`).join('')}</div>
-        </div></div>`;
-    }).join('');
+      return this.fold(`mine-${p.id}`, {
+        av: `<div class="av" style="background:${p.color}33">${p.icon}</div>`,
+        title: `${p.name}${this.trendTag(p.id)}${stock ? '' : ' <span class="tag hot">Udsolgt</span>'}`,
+        sub: `På reolen <b class="${free ? '' : 'warn'}">${stock}</b>${tr ? ` · På vej ${tr}` : ''} · Solgt ${s.sold[p.id] || 0}`,
+        action: `<button class="btn" data-act="buyQty:${p.id}:10" ${s.money < p.cost * 10 ? 'disabled' : ''}>🛒 10<small>${kr(p.cost * 10)}</small></button>`,
+        body: `<small>Salgspris ${kr(price)} · Margin <b>${kr(price - p.cost)}</b>${stock !== free ? ` · ${stock - free} bestilt` : ''}</small>
+          <small>↩️ Retur ca. <b class="${returnRate(s, p) >= 0.2 ? 'warn' : ''}">${Math.round(returnRate(s, p) * 100)} %</b>${s.returned[p.id] ? ` (${s.returned[p.id]} sendt retur)` : ''}</small>
+          <div class="seg">${Object.entries(PRICE_MODES).map(([k, m]) => `<button class="${k === mode ? 'on' : ''}" data-act="price:${p.id}:${k}">${m.name} pris</button>`).join('')}</div>`,
+      });
+    }).join('') + this.section('sec-returns', '↩️ Returneringer', this.returnsCard());
   }
 
   r_buy() {
-    const s = this.s;
-    return `<p class="tip">Varerne kommer i kasser til varemodtagelsen – bær dem hen på reolen. Lager: <b>${stockTotal(s)}/${capacity(s)}</b></p>` + PRODUCTS.map((p) => {
-      if (p.lvl > s.level) return `<div class="locked">🔒 ${p.icon} ${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span> · Level ${p.lvl}</div>`;
+    const s = this.s, locked = PRODUCTS.find((p) => p.lvl > s.level);
+    return `<p class="tip">Lager: <b>${stockTotal(s)}/${capacity(s)}</b> · Varerne kommer i kasser til varemodtagelsen</p>` + PRODUCTS.filter((p) => p.lvl <= s.level).map((p) => {
       const box = p.cost * p.box;
-      return `<div class="card prod">
-        <div class="av big" style="background:${p.color}33">${p.icon}</div>
-        <div class="info">
-          <b>${p.name} <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span>${s.everStocked[p.id] ? '' : ' <span class="tag gold">NY</span>'}${this.trendTag(p.id)}</b>
-          <small>Indkøb ${kr(p.cost)} · Salg ${kr(p.price)} · På reolen: ${s.stock[p.id] || 0}</small>
-          <small>Popularitet ${'★'.repeat(Math.round(p.pop * 3))}${'☆'.repeat(Math.max(0, 5 - Math.round(p.pop * 3)))}</small>
-          <div class="buyrow">
-            <button class="btn" data-act="buy:${p.id}:1" ${s.money < box ? 'disabled' : ''}>Køb 1 kasse (${p.box})<small>${kr(box)}</small></button>
-            <button class="btn" data-act="buy:${p.id}:3" ${s.money < box * 3 ? 'disabled' : ''}>Køb 3 kasser<small>${kr(box * 3)}</small></button>
-          </div>
-        </div></div>`;
-    }).join('');
+      return this.fold(`buy-${p.id}`, {
+        av: `<div class="av" style="background:${p.color}33">${p.icon}</div>`,
+        title: `${p.name}${s.everStocked[p.id] ? '' : ' <span class="tag gold">NY</span>'}${this.trendTag(p.id)}`,
+        sub: `Køb ${kr(p.cost)} · Salg ${kr(p.price)} · Har ${s.stock[p.id] || 0}`,
+        action: `<button class="btn" data-act="buy:${p.id}:1" ${s.money < box ? 'disabled' : ''}>📦 ${p.box}<small>${kr(box)}</small></button>`,
+        body: `<small>Popularitet ${'★'.repeat(Math.round(p.pop * 3))}${'☆'.repeat(Math.max(0, 5 - Math.round(p.pop * 3)))} · ↩️ ca. ${Math.round(returnRate(s, p) * 100)} % · <span class="tag" style="background:${TIER_COLORS[p.tier]}">${p.tier}</span></small>
+          <div class="fact"><button class="btn" data-act="buy:${p.id}:3" ${s.money < box * 3 ? 'disabled' : ''}>Køb 3 kasser<small>${kr(box * 3)}</small></button></div>`,
+      });
+    }).join('') + (locked ? `<div class="locked">🔒 Næste: ${locked.icon} ${locked.name} · Level ${locked.lvl}</div>` : '');
   }
 
   r_shop() {
     const s = this.s;
     const camp = activeCampaign(s);
-    const camps = CAMPAIGNS.map((c) => {
-      if (c.lvl > s.level) return `<div class="locked">🔒 ${c.icon} ${c.name} · Level ${c.lvl}</div>`;
-      const cd = Math.ceil((s.campCd[c.id] || 0) - s.time), on = camp?.id === c.id;
-      const btn = on ? `<span class="tag hot">Kører · ${Math.ceil(camp.until - s.time)}s</span>`
-        : cd > 0 ? `<span class="tag">Klar om ${cd}s</span>`
+    const camps = CAMPAIGNS.filter((c) => c.lvl <= s.level).map((c) => {
+      const cd = (s.campCd[c.id] || 0) - s.time, on = camp?.id === c.id;
+      const btn = on ? `<span class="tag hot">${gameTime(camp.until - s.time)}</span>`
+        : cd > 0 ? `<span class="tag">Klar om ${gameTime(cd)}</span>`
         : `<button class="btn" data-act="camp:${c.id}" ${camp ? 'disabled' : ''}>Start</button>`;
-      return `<div class="card ${on ? 'rare' : ''}"><div class="av">${c.icon}</div><div class="info"><b>${c.name}</b>
-        <small>Priser <b>−${Math.round((1 - c.price) * 100)} %</b> · <b>×${c.orders}</b> ordrer · ${campaignDur(s, c)} sek</small></div>
-        <div class="btns">${btn}</div></div>`;
+      return this.fold(`camp-${c.id}`, { av: `<div class="av">${c.icon}</div>`, cls: on ? 'rare' : '', title: c.name, sub: `−${Math.round((1 - c.price) * 100)} % · ×${c.orders} ordrer · ${gameTime(campaignDur(s, c))}`, action: btn });
     }).join('');
-    return `<h3>📣 Kampagner</h3>
-      <p class="tip">Sæt priserne ned og få mange flere ordrer – men mindre fortjeneste pr. vare. Sørg for at lageret er fyldt og at I kan pakke hurtigt nok! Hver E-commerce Manager gør kampagner 25 % længere.</p>${camps}
-      <h3>🛍️ Butik</h3>
-      <p class="tip">Du har <b>❤️ ${s.gems}</b> – du får 3 ❤️ for hvert level og flere for mål.</p>` + SHOP.map((i) => {
-      if (i.lvl > s.level) return `<div class="locked">🔒 ${i.icon} ${i.name} · Level ${i.lvl}</div>`;
-      const can = i.money ? s.money >= i.money : s.gems >= i.gems;
-      const active = s.boosts.find((b) => b.id === i.id);
-      return `<div class="card"><div class="av">${i.icon}</div><div class="info"><b>${i.name}</b><small>${i.desc}</small>${active ? `<small class="eff">Aktiv · ${Math.ceil(active.until - s.time)}s tilbage</small>` : ''}</div>
-        <div class="btns"><button class="btn ${i.gems ? 'gem' : ''}" data-act="shop:${i.id}" ${can ? '' : 'disabled'}>${i.money ? kr(i.money) : `❤️ ${i.gems}`}</button></div></div>`;
+    const items = SHOP.filter((i) => i.lvl <= s.level).map((i) => {
+      const can = i.money ? s.money >= i.money : s.gems >= i.gems, active = s.boosts.find((b) => b.id === i.id);
+      return this.fold(`shop-${i.id}`, { av: `<div class="av">${i.icon}</div>`, title: i.name, sub: active ? `<span class="eff">Aktiv · ${gameTime(active.until - s.time)}</span>` : i.desc,
+        action: `<button class="btn ${i.gems ? 'gem' : ''}" data-act="shop:${i.id}" ${can ? '' : 'disabled'}>${i.money ? kr(i.money) : `❤️ ${i.gems}`}</button>` });
     }).join('');
+    const nextC = CAMPAIGNS.find((c) => c.lvl > s.level), nextI = SHOP.find((i) => i.lvl > s.level);
+    return this.section('sec-camp', '📣 Kampagner', `<p class="tip">Lavere priser, flere ordrer. Sørg for at lageret er fyldt.</p>${camps}${nextC ? `<div class="locked">🔒 Næste: ${nextC.icon} ${nextC.name} · Level ${nextC.lvl}</div>` : ''}`, true)
+      + this.section('sec-shop', `🛍️ Annoncer & boosts · ❤️ ${s.gems}`, `${items}${nextI ? `<div class="locked">🔒 Næste: ${nextI.icon} ${nextI.name} · Level ${nextI.lvl}</div>` : ''}`, true);
   }
 
   r_upgrades() {
     const s = this.s;
     const card = ([type, F]) => {
       const n = ownedFurniture(s, type), cost = furnCost(F, n), lvl = furnLvl(F, n);
-      const eff = F.pause ? `<small class="eff">😊 +${F.joy} glæde · bruges i pauserne, virker hvor den står – gerne i et pauserum</small>`
-        : F.decor ? `<small class="eff">😊 +${F.joy} glæde for ansatte tæt på (i samme rum, ca. 7 m)</small>` : '';
-      return `<div class="card"><div class="av">${F.icon}</div>
-        <div class="info"><b>${F.name}</b><small>Du har ${n}${s.kit[type] ? ` · ${s.kit[type]} venter på at blive placeret` : ''}</small>${eff}</div>
-        <div class="btns">${s.level < lvl ? `<span class="tag">🔒 Lvl ${lvl}</span>`
-          : `<button class="btn" data-act="furn:${type}" ${s.money < cost ? 'disabled' : ''}>Køb<small>${kr(cost)}</small></button>`}</div></div>`;
+      const eff = F.desc ? `${F.desc}${F.joy ? ` · 😊 +${F.joy}` : ''}` : F.joy ? `😊 +${F.joy} glæde${F.pause ? ' · bruges i pauserne' : F.anywhere ? '' : ' tæt på'}` : '';
+      return this.fold(`furn-${type}`, {
+        av: `<div class="av">${F.icon}</div>`,
+        title: F.name,
+        sub: `Du har ${n}${s.kit[type] ? ` · ${s.kit[type]} venter` : ''}`,
+        action: `<button class="btn" data-act="furn:${type}" ${s.money < cost ? 'disabled' : ''}>Køb<small>${kr(cost)}</small></button>`,
+        body: eff ? `<small class="eff">${eff}</small>` : '',
+      });
     };
-    const all = Object.entries(FURNITURE);
-    return `<h3>🛠️ Indretning</h3><p class="tip">Køb møbler og placér dem selv. Med 🛠️ Indret-knappen kan du flytte og dreje alt.</p>${all.filter(([, F]) => !F.decor).map(card).join('')}
-      <div class="card"><div class="av">📐</div>
-        <div class="info"><b>Mere plads</b><small>Lageret er ${fmt(90 + s.tiles.length)} felter · ${fmt((90 + s.tiles.length) * TILE * TILE)} m²</small>
-          <small class="eff">${kr(TILE_COST)} pr. felt (${TILE}×${TILE} m) · husleje +${kr(TILE_RENT)}/dag pr. felt</small></div>
-        <div class="btns"><button class="btn" data-act="expand">Udvid</button></div></div>
-      <h3>🪴 Hygge & trivsel</h3><p class="tip">Glade medarbejdere arbejder hurtigere. Planter og musik virker tæt på arbejdspladsen; sofa, kaffe og bordfodbold bruges i pauserne. Byg et pauserum med vægge og en dør (🛠️ Indret → 🧱 Vægge) for ekstra glæde.</p>${all.filter(([, F]) => F.decor).map(card).join('')}
-      <h3>⬆️ Opgraderinger</h3>` +
-      Object.entries(UPGRADES).map(([k, U]) => {
-        const cur = U.levels[s.upg[k]], next = U.levels[s.upg[k] + 1];
-        const dots = U.levels.map((_, i) => `<i class="${i <= s.upg[k] ? 'on' : ''}"></i>`).join('');
-        return `<div class="card"><div class="av">${U.icon}</div>
-          <div class="info"><b>${U.name}</b><div class="dots">${dots}</div>
-            <small>Nu: ${cur.name} · ${U.fmt(cur.val)}</small>
-            ${next ? `<small class="eff">Næste: ${next.name} · ${U.fmt(next.val)}</small>` : ''}</div>
-          <div class="btns">${!next ? '<span class="tag gold">MAX</span>'
-            : s.level < next.lvl ? `<span class="tag">🔒 Lvl ${next.lvl}</span>`
-            : `<button class="btn" data-act="upg:${k}" ${s.money < next.cost ? 'disabled' : ''}>Opgrader<small>${kr(next.cost)}</small></button>`}</div></div>`;
-      }).join('');
+    const all = Object.entries(FURNITURE), open = all.filter(([type, F]) => s.level >= furnLvl(F, ownedFurniture(s, type)));
+    const nextOf = (cat) => all.filter(([type, F]) => F.cat === cat && s.level < furnLvl(F, ownedFurniture(s, type))).map(([type, F]) => ({ F, lvl: furnLvl(F, ownedFurniture(s, type)) })).sort((a, b) => a.lvl - b.lvl)[0];
+    const furn = FURN_GROUPS.map(([cat, title]) => {
+      const nx = nextOf(cat);
+      return this.section(`sec-${cat}`, title, open.filter(([, F]) => F.cat === cat).map(card).join('') + (nx ? `<div class="locked">🔒 Næste: ${nx.F.icon} ${nx.F.name} · Level ${nx.lvl}</div>` : ''), cat === 'work');
+    }).join('');
+    const upgrades = Object.entries(UPGRADES).map(([k, U]) => {
+      const cur = U.levels[s.upg[k]], next = U.levels[s.upg[k] + 1];
+      const dots = U.levels.map((_, i) => `<i class="${i <= s.upg[k] ? 'on' : ''}"></i>`).join('');
+      return this.fold(`upg-${k}`, {
+        av: `<div class="av">${U.icon}</div>`,
+        title: U.name,
+        sub: `<span class="dots">${dots}</span>`,
+        action: !next ? '<span class="tag gold">MAX</span>' : s.level < next.lvl ? `<span class="tag">🔒 Lvl ${next.lvl}</span>` : `<button class="btn" data-act="upg:${k}" ${s.money < next.cost ? 'disabled' : ''}>⬆<small>${kr(next.cost)}</small></button>`,
+        body: `<small>Nu: ${cur.name} · ${U.fmt(cur.val)}</small>${next ? `<small class="eff">Næste: ${next.name} · ${U.fmt(next.val)}</small>` : ''}`,
+      });
+    }).join('');
+    return `<div class="tools"><button data-b="edit">🛠️<small>Flyt</small></button><button data-b="walls">🧱<small>Vægge</small></button><button data-b="paintRooms">🎨<small>Farver</small></button><button data-b="expand">📐<small>Udvid</small></button></div>
+      <p class="tip">Lageret er ${fmt((90 + s.tiles.length) * TILE * TILE)} m² · Nye felter ${kr(TILE_COST)} pr. stk. + ${kr(TILE_RENT)}/dag</p>
+      ${furn}${this.section('sec-upg', '⬆️ Opgraderinger', upgrades)}`;
   }
 
   // How close the shop is to bankruptcy.
   r_risk() {
     const s = this.s, n = s.redDays;
     // Forecast: the balance once wages, rent and loan installments are paid tonight.
-    const tonight = s.money - s.employees.reduce((a, e) => a + salaryOf(e), 0) - rentOf(s) - s.loans.reduce((a, l) => { const r = loanRate(l); return a + r.principal + r.interest; }, 0);
+    const tonight = s.money - s.employees.reduce((a, e) => a + salaryOf(e), 0) - rentOf(s) - taxDue(s) - s.loans.reduce((a, l) => { const r = loanRate(l); return a + r.principal + r.interest; }, 0);
     const dots = Array.from({ length: BANKRUPT_DAYS }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
     return `<div class="risk ${n >= 4 ? 'hot' : ''}">
       <div><b>${n ? `⚠️ I minus ${n} ${n === 1 ? 'dag' : 'dage'} i træk` : '✅ Saldoen er i plus'}</b><div class="rdots">${dots}</div></div>
-      <small>Slutter dagen ${BANKRUPT_DAYS} gange i træk med en saldo under 0 kr, går du konkurs. Det er fint at bruge pengene, så længe der er penge på kontoen.
-      Saldo i aften (efter løn, husleje og afdrag): <b class="${tonight < 0 ? 'warn' : ''}">${kr(tonight)}</b></small></div>`;
+      <small>Saldo i aften (efter løn, husleje og afdrag): <b class="${tonight < 0 ? 'warn' : ''}">${kr(tonight)}</b>${n ? ` · Konkurs efter ${BANKRUPT_DAYS} dage i træk i minus` : ''}</small></div>`;
   }
 
   r_loans() {
     const s = this.s;
-    return `<h3>🏦 Lån</h3><p class="tip">Lån penge til at vokse hurtigere. Lånene betales tilbage med renter hver aften. Du kan have flere lån, men kun ét af hver slags – og banken kigger på, hvor mange dage du har været i minus den seneste uge.</p>` +
+    return `<p class="tip">Betales tilbage med renter hver aften. Højst ét af hver slags.</p>` +
       LOANS.map((L) => {
         const l = s.loans.find((x) => x.id === L.id);
         if (l) {
@@ -638,7 +780,7 @@ export class UI {
     const res = (n) => `<b class="${n < 0 ? 'warn' : 'pos'}">${n >= 0 ? '+' : ''}${kr(n)}</b>`;
     const totalExp = Object.values(st.exp).reduce((a, b) => a + b, 0);
     // Bills that are paid when the day ends: wages, rent and the loan installment.
-    const tonight = [['👥 Løn', wages], ['🏠 Husleje', rentOf(s)], ...s.loans.map((l) => { const r = loanRate(l); return [`${l.icon} ${l.name} (afdrag ${kr(r.principal)} + renter ${kr(r.interest)})`, r.principal + r.interest]; })].filter(([, n]) => n);
+    const tonight = [['👥 Løn', wages], ['🏠 Husleje', rentOf(s)], ['🧾 Moms', taxDue(s)], ...s.loans.map((l) => { const r = loanRate(l); return [`${l.icon} ${l.name} (afdrag ${kr(r.principal)} + renter ${kr(r.interest)})`, r.principal + r.interest]; })].filter(([, n]) => n);
     const pending = tonight.reduce((a, [, n]) => a + n, 0), dayCost = td.costs + pending;
     const lines = Object.entries(EXPENSES).filter(([k]) => td.exp[k] || st.exp[k])
       .map(([k, name]) => `<tr><td>${name}</td><td>${td.exp[k] ? kr(td.exp[k]) : ''}</td><td>${kr(st.exp[k] || 0)}</td></tr>`).join('');
@@ -647,38 +789,37 @@ export class UI {
       ? `<div class="bars">${h.map((d) => `<div class="bar"><small>${fmt(d.revenue - d.costs)}</small><div class="pair"><i style="height:${(d.revenue / max) * 100}%"></i><i class="cost" style="height:${(d.costs / max) * 100}%"></i></div><span>D${d.day}</span></div>`).join('')}</div>
          <p class="legend"><i></i>Indtægter <i class="cost"></i>Udgifter · tal = resultat</p>`
       : '<p class="empty">Historik vises efter første dag.</p>';
-    return `<div class="grid3">
-        <div class="stat"><small>Indtægter i dag</small><b class="pos">${kr(td.revenue)}</b></div>
-        <div class="stat"><small>Udgifter i dag</small><b>${kr(dayCost)}</b><small>heraf ${kr(pending)} i aften</small></div>
-        <div class="stat"><small>Resultat i dag</small>${res(td.revenue - dayCost)}</div>
-      </div>
-      <h3>Regnskab</h3>
-      <table class="ledger">
+    const ledger = `<table class="ledger">
         <tr><th></th><th>I dag</th><th>I alt</th></tr>
         <tr class="inc"><td>🛍️ Salg (${td.orders} / ${fmt(st.shipped)} ordrer)</td><td>${kr(td.revenue)}</td><td>${kr(st.revenue)}</td></tr>
         ${lines}
         ${tonight.length ? `<tr class="sub"><td colspan="3">⏳ Trækkes når dagen slutter</td></tr>${tonight.map(([n, v]) => `<tr><td>${n}</td><td>${kr(v)}</td><td></td></tr>`).join('')}` : ''}
         <tr class="sum"><td>Resultat</td><td>${res(td.revenue - dayCost)}</td><td>${res(st.revenue - totalExp)}</td></tr>
-      </table>
-      ${this.r_risk()}
-      ${this.r_loans()}
-      <h3>Faste udgifter</h3>
-      <div class="breakdown">
+      </table>`;
+    const fixed = `<div class="breakdown">
         <small>🏠 Husleje: <b>${kr(rentOf(s))}/dag</b> – stiger når du bygger reoler, pakkeborde og skriveborde</small>
         <small>👥 Løn: <b>${kr(wages)}/dag</b> (${s.employees.length} ansatte)</small>
         <small>🎁 Emballage: <b>${kr(PACKAGING)}</b> og 🚚 fragt: <b>${kr(FREIGHT)}</b> pr. pakke</small>
         ${s.loans.map((l) => { const r = loanRate(l); return `<small>${l.icon} ${l.name}: <b>${kr(r.principal + r.interest)}/dag</b> (heraf renter ${kr(r.interest)})</small>`; }).join('')}
-        <small>Husleje, løn og afdrag trækkes når dagen slutter.</small>
-      </div>
-      <h3>Resultat pr. dag</h3>${bars}
-      <h3>Nøgletal</h3>
-      <div class="grid3">
+      </div>`;
+    const figures = `<div class="grid3">
         <div class="stat"><small>Besøgende/min</small><b>${fx.traffic.toFixed(0)}</b></div>
         <div class="stat"><small>Konvertering</small><b>${(fx.conv * 100).toFixed(1)} %</b></div>
         <div class="stat"><small>Tabte salg</small><b>${fmt(st.lost)}</b></div>
+      </div>`;
+    return `<div class="grid3">
+        <div class="stat"><small>Indtægter i dag</small><b class="pos">${kr(td.revenue)}</b></div>
+        <div class="stat"><small>Udgifter i dag</small><b>${kr(dayCost)}</b><small>heraf ${kr(pending)} i aften</small></div>
+        <div class="stat"><small>Resultat i dag</small>${res(td.revenue - dayCost)}</div>
       </div>
-      ${cloud.user ? `<p class="tip acct">👤 Logget ind som <b>${esc(cloud.user)}</b> · spillet gemmes i skyen</p><button class="btn ghost wide" data-act="logout">Log ud</button>` : ''}
-      <button class="btn ghost wide" data-act="reset">${this.confirmReset ? 'Tryk igen for at slette alt' : 'Start forfra'}</button>`;
+      ${this.r_risk()}
+      ${this.section('sec-ledger', '🧾 Regnskab', ledger, true)}
+      ${this.section('sec-loans', `🏦 Lån${s.loans.length ? ` (${s.loans.length})` : ''}`, this.r_loans())}
+      ${this.section('sec-hist', '📈 Resultat pr. dag', bars)}
+      ${this.section('sec-fixed', '🏠 Faste udgifter', fixed)}
+      ${this.section('sec-figs', '🔢 Nøgletal', figures)}
+      ${this.section('sec-acct', '⚙️ Konto', `${cloud.user ? `<p class="tip acct">👤 Logget ind som <b>${esc(cloud.user)}</b> · spillet gemmes i skyen</p><button class="btn ghost wide" data-act="logout">Log ud</button>` : ''}
+        <button class="btn ghost wide" data-act="reset">${this.confirmReset ? 'Tryk igen for at slette alt' : 'Start forfra'}</button>`)}`;
   }
 }
 

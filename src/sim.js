@@ -1,17 +1,18 @@
 import {
-  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, runner, furnCost, furnLvl, PRODUCTS, TREND, RETURN_FREIGHT, BREAK_ROOM_JOY, DELIVERY_SPOT, PALLET,
+  DAY_LENGTH, rentOf, FURNITURE, LOANS, BANKRUPT_DAYS, PRICE_MODES, ROLES, SOME_BONUS, SOME_VIRAL, ECOM_BONUS, SUPPORT_RATE, EMP_TIERS, productById, runner, furnCost, furnLvl, PRODUCTS, TREND, RETURN_FREIGHT, BREAK_ROOM_JOY, DELIVERY_SPOT, PALLET, HELP, TAX_EVERY, TAX_RATE,
 } from './data.js';
 import { roomAt } from './rooms.js';
 import {
   bus, pick, capacity, stockTotal, listed, upgVal, addBoost, addMoney, salaryOf, queuedCount,
-  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP, onDuty,
+  freeBoxSlot, refreshCandidates, spend, charge, newDay, kr, activeCampaign, available, ownedFurniture, addXP, onDuty, atOwnJob, activeSeason,
 } from './state.js';
+import { tickEvents, startOfDay, endOfDay } from './events.js';
 
 export function effects(s) {
-  const comp = upgVal(s, 'computer');
+  const comp = upgVal(s, 'computer') * (s.furniture.some((f) => f.type === 'whiteboard') ? 1.1 : 1);
   let some = 0, ecom = 0;
   for (const e of s.employees) {
-    if (e.desk == null || !onDuty(s, e)) continue;
+    if (e.desk == null || !atOwnJob(s, e)) continue;
     if (e.role === 'some') some += SOME_BONUS[e.tier] * comp * empEff(s, e);
     if (e.role === 'ecom') ecom += ECOM_BONUS[e.tier] * comp * (e.special === 'data' ? 1.5 : 1) * empEff(s, e);
   }
@@ -19,10 +20,10 @@ export function effects(s) {
   for (const b of s.boosts) b.kind === 'traffic' ? (bt += b.mult) : (bc += b.mult);
   const sat = 0.6 + (s.satisfaction / 100) * 0.6;
   const n = listed(s).length;
-  const traffic = 50 * (1 + 0.06 * (s.level - 1)) * (1 + 0.08 * Math.max(0, n - 1)) * (1 + some) * (1 + bt) * sat;
+  const traffic = 50 * (1 + 0.06 * (s.level - 1)) * (1 + 0.08 * Math.max(0, n - 1)) * (1 + some) * Math.max(0.1, 1 + bt) * sat * (activeSeason(s)?.traffic ?? 1);
   const conv = 0.06 * (1 + upgVal(s, 'webshop') + ecom + bc);
   const camp = activeCampaign(s);
-  return { traffic, conv, opm: n ? traffic * conv * (camp?.orders ?? 1) : 0, some, ecom, bt, bc, sat, camp };
+  return { traffic, conv, opm: n && !(s.outage?.until > s.time) ? traffic * conv * (camp?.orders ?? 1) : 0, some, ecom, bt, bc, sat, camp };
 }
 
 export const queueCap = (s) => 15 + 5 * s.tables;
@@ -94,7 +95,7 @@ function spawnOrder(s) {
   let p = L[L.length - 1];
   for (let i = 0; i < L.length; i++) { r -= w[i]; if (r <= 0) { p = L[i]; break; } }
   if (available(s, p.id) <= 0) return lose(s, p, 'stock');
-  if (s.orders.length >= queueCap(s)) return lose(s, p, 'queue');
+  if (s.orders.filter((o) => !o.b2b).length >= queueCap(s)) return lose(s, p, 'queue');
   s.orders.push({ id: s.nextId++, productId: p.id, t: s.time, status: 'queued', by: null });
   bus.emit('order', p);
 }
@@ -170,6 +171,13 @@ function workSpots(s, e) {
   return of(e.role === 'packer' ? 'table' : 'shelf');
 }
 
+// Someone helping out elsewhere works slower, but learns the job as they go.
+export const helpEff = (e) => (e.help ? HELP.eff + Math.min(HELP.learn, ((e.skill?.[e.help] || 0) / HELP.learnTime) * HELP.learn) : 1);
+export const helpPenalty = (e) => Math.round(Math.min(HELP.joyMax, HELP.joy + (e.helpT || 0) / 8));
+
+// Sales since the last VAT settlement, due when today's day number is a tax day (level 3 and up).
+export const taxDue = (s) => (s.level >= 3 && s.day % TAX_EVERY === 0 ? Math.round((s.stats.revenue - s.taxFrom) * TAX_RATE) : 0);
+
 // How happy an employee is (0–100), what adds or subtracts, and what would help.
 export function happiness(s, e) {
   const c = happyCache.get(e.id);
@@ -182,22 +190,19 @@ export function happiness(s, e) {
   if (R.desk && e.desk == null) { add(-25, '🖥️ Intet skrivebord'); tips.unshift('🖥️ Køb et skrivebord til mig'); }
   // Plants and music near the work spot; break furniture wherever it stands (they walk there on breaks).
   const spots = workSpots(s, e);
-  const near = (type) => s.furniture.filter((f) => f.type === type && (FURNITURE[type].pause
+  const near = (type) => s.furniture.filter((f) => f.type === type && (FURNITURE[type].pause || FURNITURE[type].anywhere
     || spots.some((p) => Math.hypot(p.x - f.x, p.z - f.z) <= NEAR && roomAt(s, p.x, p.z) === roomAt(s, f.x, f.z)))).length;
-  const decor = [
-    ['plant', 3, '🪴 Planter', '🪴 Savner lidt grønt – sæt en plante tæt på (i samme rum)'],
-    ['speaker', 1, '🎵 Musik', '🎵 Savner musik – sæt en højttaler tæt på (i samme rum)'],
-    ['coffee', 1, '☕ Kaffe', '☕ Savner en kop kaffe i pauserne – køb en kaffebar'],
-    ['sofa', 2, '🛋️ Pausested', '🛋️ Savner et sted at holde pause – køb en sofa'],
-    ['foosball', 1, '⚽ Bordfodbold', '⚽ Et bordfodboldbord ville gøre pauserne sjovere'],
-  ];
   if (breakRooms(s).size) add(BREAK_ROOM_JOY, '🚪 Pauserum');
   else if (s.furniture.some((f) => FURNITURE[f.type].pause)) tips.push('🚪 Byg vægge og en dør rundt om pausemøblerne – så får I et rigtigt pauserum');
-  for (const [type, max, label, tip] of decor) {
-    const n = Math.min(max, near(type));
-    if (n) add(n * FURNITURE[type].joy, label);
-    else if (spots.length && s.level >= FURNITURE[type].lvl[0]) tips.push(tip);
+  for (const [type, F] of Object.entries(FURNITURE)) {
+    if (!F.joy) continue;
+    const n = Math.min(F.joyMax, near(type));
+    if (n) add(n * F.joy, F.label);
+    else if (F.tip && spots.length && s.level >= F.lvl[0]) tips.push(F.tip);
   }
+  if (e.help) add(-helpPenalty(e), '🤝 Hjælper til');
+  if (e.mood?.until >= s.day) add(e.mood.n, e.mood.why);
+  if (s.morale?.until >= s.day) add(s.morale.n, s.morale.why);
   // Colleagues in the same area
   const mates = s.employees.filter((o) => o !== e && AREA[o.role] === AREA[e.role]).length;
   if (mates) add(5, '👫 Har kolleger');
@@ -221,6 +226,8 @@ function endDay(s) {
   charge(s, wages, 'staff');
   charge(s, rentOf(s), 'rent');
   payLoans(s);
+  const tax = taxDue(s);
+  if (tax) { charge(s, tax, 'tax'); s.taxFrom = s.stats.revenue; bus.emit('toast', `🧾 Momsen er betalt: ${kr(tax)}`, 'warn', 5000); }
   const t = s.stats.today;
   // A bad day is one that ends with less than 0 kr on the account – spending money you have is fine.
   s.redDays = s.money < 0 ? s.redDays + 1 : 0;
@@ -230,8 +237,10 @@ function endDay(s) {
   if (s.stats.history.length > 7) s.stats.history.shift();
   bus.emit('dayEnd', { day: s.day, ...t, wages });
   s.stats.today = newDay();
+  endOfDay(s);
   s.day++;
   s.dayTime = 0;
+  startOfDay(s);
   refreshCandidates(s);
   rollTrends(s);
   bringReturns(s);
@@ -246,7 +255,7 @@ const rollDays = () => TREND.days[0] + Math.floor(Math.random() * (TREND.days[1]
 export function rollTrends(s) {
   const open = PRODUCTS.filter((p) => p.lvl <= s.level);
   if (open.length < 2) return;
-  if (s.trend && --s.trend.days > 0) bus.emit('toast', `🔥 ${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender stadig${s.trend.days === 1 ? ' – sidste dag' : ''}`, 'event');
+  if (s.trend && --s.trend.days > 0) bus.emit('toast', `🔥 ${productById[s.trend.id].icon} ${productById[s.trend.id].name} trender stadig${s.trend.days === 1 ? ' – sidste dag' : ''}`, 'quiet');
   else {
     const p = pick(open.filter((q) => q.id !== s.trend?.id && q.id !== s.flop?.id));
     s.trend = { id: p.id, days: rollDays() };
@@ -274,8 +283,8 @@ function randomEvent(s) {
     s.delayUntil = s.time + 90;
     bus.emit('toast', '🚧 Leverandør forsinket – nye leverancer tager længere tid.', 'warn');
   } else if (ev === 'blackfriday') {
-    addBoost(s, { id: 'bf', name: 'Black Friday', icon: '🛍️', kind: 'traffic', mult: 3, dur: 40 });
-    bus.emit('toast', '🛍️ BLACK FRIDAY! +300 % trafik – er lageret klar?', 'event');
+    addBoost(s, { id: 'hype', name: 'Pludselig hype', icon: '🛍️', kind: 'traffic', mult: 3, dur: 40 });
+    bus.emit('toast', '🛍️ Pludselig hype! +300 % trafik – er lageret klar?', 'event');
   } else {
     addBoost(s, { id: 'tiktok', name: 'Viral TikTok', icon: '🎵', kind: 'traffic', mult: 0.6, dur: 50 });
     bus.emit('toast', '🎵 En kunde lavede en TikTok om jer! +60 % trafik', 'event');
@@ -309,7 +318,7 @@ export function update(s, dt) {
   }
 
   // Customer service works through tickets; open tickets slowly hurt satisfaction.
-  for (const e of s.employees) if (e.role === 'support' && e.desk != null && onDuty(s, e)) s.ticketWork += supportRate(s, e) * dt;
+  for (const e of s.employees) if (e.role === 'support' && e.desk != null && atOwnJob(s, e)) s.ticketWork += supportRate(s, e) * dt;
   while (s.ticketWork >= 1) { s.ticketWork--; if (s.tickets > 0) { s.tickets--; s.stats.ticketsSolved++; s.satisfaction = Math.min(100, s.satisfaction + 0.8); } }
   if (!s.tickets) s.ticketWork = 0;
   if (s.tickets) s.satisfaction = Math.max(0, s.satisfaction - 0.012 * s.tickets * dt);
@@ -318,7 +327,8 @@ export function update(s, dt) {
   if (Math.random() < (fx.opm / 60) * dt) spawnOrder(s);
 
   for (const e of s.employees) {
-    if (e.role !== 'some' || e.desk == null || !onDuty(s, e)) continue;
+    if (e.help && onDuty(s, e)) { e.helpT = (e.helpT || 0) + dt; (e.skill ??= {})[e.help] = (e.skill[e.help] || 0) + dt; }
+    if (e.role !== 'some' || e.desk == null || !atOwnJob(s, e)) continue;
     e.postT = (e.postT || 0) + dt;
     if (e.postT < 25) continue;
     e.postT = 0;
@@ -329,11 +339,12 @@ export function update(s, dt) {
     }
   }
 
+  tickEvents(s, dt);
   s.eventT -= dt;
   if (s.eventT <= 0) { s.eventT = 150 + Math.random() * 120; randomEvent(s); }
 
   let late = 0;
-  for (const o of s.orders) if (s.time - o.t > 90) late++;
+  for (const o of s.orders) if (!o.b2b && s.time - o.t > 90) late++;
   if (late) s.satisfaction = Math.max(0, s.satisfaction - 0.02 * late * dt);
 
   // Courier collects parcels every ~18 seconds.
@@ -381,6 +392,7 @@ export function advisor(s) {
     const p = productById[lostStock[lostStock.length - 1].id];
     return { text: `Udsolgt: ${p.icon} ${p.name} – du taber salg → køb flere varer`, tab: 'buy' };
   }
+  if ((lostQueue.length || q >= 10) && s.employees.some((e) => e.role !== 'packer') && !s.employees.some((e) => e.help)) return { text: 'For mange ordrer i kø → sæt andre til at hjælpe med pakningen', tab: 'staff' };
   if (lostQueue.length || q >= 6) {
     if (s.level >= ROLES.packer.lvl && s.employees.filter((e) => e.role === 'packer').length < s.tables)
       return { text: 'For mange ordrer i kø → ansæt en lagerpakker', tab: 'staff' };
@@ -393,7 +405,7 @@ export function advisor(s) {
     return { text: 'For få ordrer → kør en kampagne, arbejd på webshoppen eller køb annoncer', tab: 'shop' };
   }
   if (stock < 8 && !s.deliveries.length) return { text: 'Lageret er ved at løbe tørt → bestil flere varer', tab: 'buy' };
-  return { text: 'Det kører! Find den næste ting at optimere 🚀', tab: null };
+  return { text: 'Det kører! Find den næste ting at optimere 🚀', tab: null, calm: true };
 }
 
 export function dayReport(r) {
